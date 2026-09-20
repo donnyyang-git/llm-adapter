@@ -4,7 +4,7 @@
 | --- | --- |
 | 交接 ID | `LLMA-HO-20260920-125729-03` |
 | 建立時間 | `2026-09-20T12:21:30+08:00` |
-| 最後更新時間 | `2026-09-20T12:57:29+08:00` |
+| 最後更新時間 | `2026-09-20T13:32:21+08:00` |
 | 工作區 | `llm_adapter` |
 | 接續起點 | 驗證新 Gemini 聊天導頁與歷史 session 載入的 Windows 實機行為 |
 
@@ -24,6 +24,7 @@
 | 2026-09-20T12:25:10+08:00 | Event broker、SSE、recapture | 完成 session 事件發布、SSE endpoint 與重啟後 active turn 重新擷取；`43 passed`，VS Code 診斷為零。 |
 | 2026-09-20T12:36:58+08:00 | 原生聊天頁面與恢復 | 完成根路由、原生 HTML/CSS/JavaScript 聊天介面、session 恢復與 SSE 遞增延遲重連；`45 passed`，VS Code 診斷為零。 |
 | 2026-09-20T12:57:29+08:00 | 本機歷史與雙模式新對話 | 完成 session 歷史清單、重新載入、`New local record` 與 `New Gemini chat`；新 Gemini 模式會導向 `/app` 後建立本機 session，歷史 session 與目前 tab 不符時採唯讀保護；`47 passed`。 |
+| 2026-09-20T13:32:21+08:00 | README 教學整理 | 將安裝、首次登入、日常啟動、資料備份、設定與故障排除集中至 README，保留既有介面操作說明。 |
 
 ## 目前狀態
 

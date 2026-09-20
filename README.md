@@ -1,15 +1,85 @@
-# llm-adapter
+# LLM Adapter
 
-只在本機執行的 Gemini 對話保存器。詳細範圍與里程碑請參閱 [llm_adapter.md](llm_adapter.md)。
+只在本機執行的 Gemini 對話保存器。它會啟動一個使用獨立設定檔的專用 Chrome，讓你在本機網頁介面中選擇 Gemini 分頁、逐題提問，並將每個對話保存為 JSON 與 Markdown。
 
-## 開發
+服務只監聽 `127.0.0.1`，不會讀取或接管日常使用的 Chrome。完整產品範圍與技術規劃請參閱 [llm_adapter.md](llm_adapter.md)。
+
+## 需求
+
+- Windows 10 或更新版本。
+- Python 3.11 以上。
+- 已安裝 Google Chrome。
+- 可登入的 Google/Gemini 帳號。
+
+## 安裝
+
+在專案根目錄執行：
 
 ```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 python -m pip install -e ".[test]"
-llm-adapter
 ```
 
-服務預設監聽 `http://127.0.0.1:8000`。
+若 PowerShell 拒絕執行啟用指令，請先在目前終端機執行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+```
+
+## 首次使用
+
+1. 啟動服務：
+
+	```powershell
+	.\.venv\Scripts\python.exe -m uvicorn llm_adapter.main:app --host 127.0.0.1 --port 8000
+	```
+
+2. 在瀏覽器開啟 `http://127.0.0.1:8000`。
+3. 按 `Connect Chrome`。程式會啟動專用 Chrome 視窗，設定檔位於 `data/chrome-profile`。
+4. 在該專用 Chrome 視窗登入 Google，並開啟 `https://gemini.google.com/`。請勿嘗試複製日常 Chrome 的設定檔或 Cookie。
+5. 回到 LLM Adapter 網頁，按 `Refresh`，選擇 Gemini 分頁，再建立或選取本機對話紀錄。
+
+首次登入後，登入狀態會保留在專用設定檔中；後續只要按 `Connect Chrome` 或 `Reconnect Chrome` 即可重新連線。
+
+## 日常啟動、測試與關閉
+
+```powershell
+# 啟動網站
+.\.venv\Scripts\python.exe -m uvicorn llm_adapter.main:app --host 127.0.0.1 --port 8000
+
+# 或使用安裝的命令
+.\.venv\Scripts\llm-adapter.exe
+
+# 執行自動測試
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+服務執行時，在終端機按 `Ctrl+C` 可正常停止服務並關閉其 CDP 連線。專用 Chrome 視窗可自行關閉；下次連線時會再次啟動或重新使用它。
+
+## 資料位置與備份
+
+每個本機 session 同時保存為：
+
+```text
+data/conversations/<session-id>.json
+data/conversations/<session-id>.md
+```
+
+`.json` 保存完整結構與狀態，`.md` 方便閱讀、搜尋或備份。`data/` 已由 Git 排除，包含專用 Chrome 的登入狀態；不要提交、分享或刪除 `data/chrome-profile`，除非你要清除專用 Chrome 的登入狀態。若要備份對話，請只複製 `data/conversations/`。
+
+## 可選設定
+
+設定使用 `LLM_ADAPTER_` 前綴的環境變數。常見範例：
+
+```powershell
+$env:LLM_ADAPTER_PORT = "8001"
+$env:LLM_ADAPTER_CHROME_EXECUTABLE = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+.\.venv\Scripts\llm-adapter.exe
+```
+
+可設定的項目包括 `HOST`、`PORT`、`CDP_HOST`、`CDP_PORT`、`CHROME_EXECUTABLE`、`DATA_DIR` 與回答 timeout 相關設定。預設服務埠為 `8000`，Chrome CDP 埠為 `9222`。
 
 ## 介面導覽與操作流程
 
@@ -69,3 +139,17 @@ data/conversations/<session-id>.md
 `Recapture response` 用於問題已送到 Gemini、但控制台中斷或未完整擷取回答時，重新從目前 Gemini 頁面擷取最新回答。它只會在最新一輪仍處於 `pending` 或 `generating` 時啟用；當狀態為 `completed` 時按鈕會停用。
 
 此功能不會再次送出問題，因此可避免 Gemini 收到重複提問。
+
+## 故障排除
+
+| 情況 | 處理方式 |
+| --- | --- |
+| 網頁無法開啟 | 確認啟動命令仍在執行，並開啟 `http://127.0.0.1:8000`。若出現埠號已被使用，關閉舊服務，或將 `LLM_ADAPTER_PORT` 設為其他埠號後重新啟動。 |
+| 顯示 `Connect Chrome` 或 `Reconnect Chrome` | 按該按鈕建立與專用 Chrome 的連線；重新啟動服務後需要重新連線，但不需要重新登入。 |
+| 清單沒有 Gemini 分頁 | 在專用 Chrome 開啟 `https://gemini.google.com/`，完成登入後回到網站按 `Refresh`。日常 Chrome 的分頁不會出現在清單中。 |
+| 無法送出問題 | 確認已選取 Gemini 分頁、輸入框已可用，且上一輪不是 `pending` 或 `generating`。Gemini 正在產生回答時，系統會禁止送出下一題。 |
+| 回答停在 `pending` 或 `generating` | 不要直接重送相同問題。先在同一 Gemini 分頁確認回答是否存在，再按 `Recapture response` 擷取現有回答。 |
+| 找不到 Chrome | 安裝 Google Chrome，或設定 `LLM_ADAPTER_CHROME_EXECUTABLE` 指向 `chrome.exe` 的完整路徑。 |
+| 登入狀態異常 | 關閉專用 Chrome，確認沒有其他程式占用 `data/chrome-profile`，再按 `Connect Chrome` 並重新登入。若要完全重設登入狀態，先備份對話資料，再刪除 `data/chrome-profile`。 |
+
+Gemini 的網頁結構可能變動。若 Gemini 已登入但仍持續找不到輸入框，請保留 `data/conversations/` 的對話檔案與錯誤訊息，以便檢查選擇器相容性。
