@@ -4,7 +4,7 @@
 | --- | --- |
 | 交接 ID | `LLMA-HO-20260920-125729-03` |
 | 建立時間 | `2026-09-20T12:21:30+08:00` |
-| 最後更新時間 | `2026-09-20T13:43:56+08:00` |
+| 最後更新時間 | `2026-09-20T14:06:29+08:00` |
 | 工作區 | `llm_adapter` |
 | 接續起點 | 驗證新 Gemini 聊天導頁與歷史 session 載入的 Windows 實機行為 |
 
@@ -26,6 +26,7 @@
 | 2026-09-20T12:57:29+08:00 | 本機歷史與雙模式新對話 | 完成 session 歷史清單、重新載入、`New local record` 與 `New Gemini chat`；新 Gemini 模式會導向 `/app` 後建立本機 session，歷史 session 與目前 tab 不符時採唯讀保護；`47 passed`。 |
 | 2026-09-20T13:32:21+08:00 | README 教學整理 | 將安裝、首次登入、日常啟動、資料備份、設定與故障排除集中至 README，保留既有介面操作說明。 |
 | 2026-09-20T13:43:56+08:00 | README 跨電腦指南 | 補充 Git clone/pull、虛擬環境重建、跨電腦對話搬遷與 Git 權限、埠號、專用 profile 等常見問題。 |
+| 2026-09-20T14:06:29+08:00 | Chrome 啟動診斷 | 新增 JSONL trace 與 Chrome stdout/stderr log；timeout 與提前退出會顯示相對 log 路徑及 exit code，ChromeManager 聚焦測試 `9 passed`、完整測試 `48 passed`。 |
 
 ## 目前狀態
 

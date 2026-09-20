@@ -45,6 +45,73 @@ def test_finds_explicit_chrome_executable(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reports_chrome_exit_and_writes_trace_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    executable = tmp_path / "chrome.exe"
+    executable.touch()
+    manager = ChromeManager(
+        Settings(data_dir=tmp_path / "data", chrome_executable=executable)
+    )
+    manager._connect = AsyncMock(return_value=False)
+
+    class ExitedProcess:
+        pid = 1234
+        returncode = 19
+
+    monkeypatch.setattr(
+        "llm_adapter.chrome_manager.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=ExitedProcess()),
+    )
+
+    status = await manager.start()
+
+    assert status.state == "error"
+    assert "exit code 19" in (status.message or "")
+    trace_events = [
+        json.loads(line)["event"]
+        for line in (tmp_path / "data" / "logs" / "chrome-manager.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    assert trace_events == ["start_requested", "chrome_launching", "chrome_started", "chrome_exited"]
+
+
+@pytest.mark.asyncio
+async def test_cdp_timeout_points_to_diagnostic_logs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    executable = tmp_path / "chrome.exe"
+    executable.touch()
+    manager = ChromeManager(
+        Settings(
+            data_dir=tmp_path / "data",
+            chrome_executable=executable,
+            chrome_startup_timeout_seconds=0,
+        )
+    )
+    manager._connect = AsyncMock(return_value=False)
+
+    class RunningProcess:
+        pid = 1234
+        returncode = None
+
+    monkeypatch.setattr(
+        "llm_adapter.chrome_manager.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=RunningProcess()),
+    )
+
+    status = await manager.start()
+
+    assert status.state == "error"
+    assert "data/logs/chrome-manager.jsonl" in (status.message or "")
+    assert "data/logs/chrome-stderr.log" in (status.message or "")
+    assert '"event": "cdp_endpoint_timeout"' in (
+        tmp_path / "data" / "logs" / "chrome-manager.jsonl"
+    ).read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
 async def test_tab_ids_remain_stable_and_closed_tabs_are_removed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

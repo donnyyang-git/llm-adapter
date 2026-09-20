@@ -120,6 +120,27 @@ $env:LLM_ADAPTER_CHROME_EXECUTABLE = "C:\Program Files\Google\Chrome\Application
 
 可設定的項目包括 `HOST`、`PORT`、`CDP_HOST`、`CDP_PORT`、`CHROME_EXECUTABLE`、`DATA_DIR` 與回答 timeout 相關設定。預設服務埠為 `8000`，Chrome CDP 埠為 `9222`。
 
+## Chrome 啟動診斷 Log
+
+當畫面顯示 Chrome 無法連線或 CDP endpoint timeout 時，程式會在 `data/logs/` 建立下列檔案：
+
+```text
+data/logs/chrome-manager.jsonl
+data/logs/chrome-stderr.log
+```
+
+`chrome-manager.jsonl` 是每行一筆 JSON 的 trace，會記錄啟動請求、Chrome 啟動、CDP 連線失敗、連線成功、Chrome 提前退出與 timeout。`chrome-stderr.log` 是 Chrome 原生的 stdout/stderr，適合檢查 profile 鎖定、參數或瀏覽器啟動問題。
+
+發生問題後，在專案根目錄執行：
+
+```powershell
+Get-Content data\logs\chrome-manager.jsonl -Tail 100
+Get-Content data\logs\chrome-stderr.log -Tail 200
+Test-NetConnection 127.0.0.1 -Port 9222
+```
+
+若 trace 顯示 `chrome_exited`，請查看其中的 `returncode` 和 Chrome log；若持續是 `cdp_connect_failed` 或 `cdp_endpoint_timeout`，確認預設 CDP 埠 `9222` 未被其他程式占用。這些 log 可能含有本機路徑或 Chrome 的診斷資訊，分享前請先檢查內容。
+
 ## 介面導覽與操作流程
 
 開啟本機網址後，依下列步驟操作：
@@ -196,6 +217,7 @@ data/conversations/<session-id>.md
 | `git pull` 被本機變更阻擋 | 先執行 `git status` 確認差異；需要保留時先 commit 或 `git stash`，再拉取更新。不要用 Git 指令強制覆寫不確定的檔案。 |
 | 啟動時顯示埠號被占用 | 先關閉舊的 LLM Adapter 程序；或設定未使用的 `LLM_ADAPTER_PORT`。若 Chrome 無法連線，也確認沒有另一個專用 Chrome 或程式占用預設 CDP 埠 `9222`，必要時另設 `LLM_ADAPTER_CDP_PORT`。 |
 | 專用 Chrome 一開就關閉或無法連線 | 確認 `data/chrome-profile` 沒有被其他 Chrome 程序使用，完全關閉該專用 Chrome 後再按 `Connect Chrome`。不要對日常使用的 Chrome 加入這個專案的 CDP 參數。 |
+| `Chrome started, but its local debugging endpoint did not respond` | 依「Chrome 啟動診斷 Log」讀取兩個 log，並執行 `Test-NetConnection 127.0.0.1 -Port 9222`。trace 若有 `chrome_exited`，優先檢查 Chrome stderr 與 exit code；若只有重複 `cdp_connect_failed`，確認 CDP 埠未被占用。 |
 | 跨電腦看不到舊對話 | Git 不會同步 `data/`。請只複製 `data/conversations/`，不要傳送或同步 `data/chrome-profile`。 |
 
 Gemini 的網頁結構可能變動。若 Gemini 已登入但仍持續找不到輸入框，請保留 `data/conversations/` 的對話檔案與錯誤訊息，以便檢查選擇器相容性。

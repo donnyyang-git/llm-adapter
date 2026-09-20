@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -15,6 +16,8 @@ from llm_adapter.models import ChromeStatus, TabInfo
 
 class ChromeManager:
     NEW_GEMINI_CONVERSATION_URL = "https://gemini.google.com/app"
+    TRACE_LOG_NAME = "chrome-manager.jsonl"
+    CHROME_LOG_NAME = "chrome-stderr.log"
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -29,6 +32,18 @@ class ChromeManager:
         self._page_ids: dict[int, str] = {}
         self._selected_tab_id: str | None = None
         self._start_lock = asyncio.Lock()
+
+    @property
+    def _logs_dir(self) -> Path:
+        return self.settings.data_dir / "logs"
+
+    @property
+    def _trace_log_path(self) -> Path:
+        return self._logs_dir / self.TRACE_LOG_NAME
+
+    @property
+    def _chrome_log_path(self) -> Path:
+        return self._logs_dir / self.CHROME_LOG_NAME
 
     @property
     def status(self) -> ChromeStatus:
@@ -63,7 +78,9 @@ class ChromeManager:
 
     async def start(self) -> ChromeStatus:
         async with self._start_lock:
+            self._write_trace("start_requested", endpoint=self.endpoint)
             if self.status.connected:
+                self._write_trace("already_connected")
                 return self.status
 
             self._state = ChromeStatus(state="starting", connected=False)
@@ -72,6 +89,7 @@ class ChromeManager:
 
             executable = self.find_chrome_executable()
             if executable is None:
+                self._write_trace("chrome_executable_not_found")
                 self._state = ChromeStatus(
                     state="error",
                     connected=False,
@@ -80,27 +98,58 @@ class ChromeManager:
                 return self.status
 
             self.settings.chrome_profile_dir.mkdir(parents=True, exist_ok=True)
-            self._process = await asyncio.create_subprocess_exec(
+            self._logs_dir.mkdir(parents=True, exist_ok=True)
+            command = (
                 str(executable),
                 f"--remote-debugging-address={self.settings.cdp_host}",
                 f"--remote-debugging-port={self.settings.cdp_port}",
                 f"--user-data-dir={self.settings.chrome_profile_dir}",
                 "--no-first-run",
                 "--no-default-browser-check",
+                "--enable-logging=stderr",
+                "--v=1",
                 "https://gemini.google.com/app",
             )
+            self._write_trace("chrome_launching", command=command)
+            try:
+                with self._chrome_log_path.open("ab") as chrome_log:
+                    self._process = await asyncio.create_subprocess_exec(
+                        *command,
+                        stdout=chrome_log,
+                        stderr=chrome_log,
+                    )
+            except OSError as error:
+                self._write_trace("chrome_launch_failed", error=str(error))
+                self._state = ChromeStatus(
+                    state="error",
+                    connected=False,
+                    message="Chrome could not be started. See data/logs/chrome-manager.jsonl.",
+                )
+                return self.status
+
+            self._write_trace("chrome_started", process_id=self._process.pid)
+            if self._process.returncode is not None:
+                self._set_process_exit_error(self._process.returncode)
+                return self.status
 
             loop = asyncio.get_running_loop()
             deadline = loop.time() + self.settings.chrome_startup_timeout_seconds
             while loop.time() < deadline:
+                if self._process.returncode is not None:
+                    self._set_process_exit_error(self._process.returncode)
+                    return self.status
                 if await self._connect():
                     return self.status
                 await asyncio.sleep(0.25)
 
+            self._write_trace("cdp_endpoint_timeout")
             self._state = ChromeStatus(
                 state="error",
                 connected=False,
-                message="Chrome started, but its local debugging endpoint did not respond.",
+                message=(
+                    "Chrome started, but its local debugging endpoint did not respond. "
+                    "See data/logs/chrome-manager.jsonl and data/logs/chrome-stderr.log."
+                ),
             )
             return self.status
 
@@ -229,10 +278,37 @@ class ChromeManager:
             self._playwright = await async_playwright().start()
         try:
             self._browser = await self._playwright.chromium.connect_over_cdp(self.endpoint)
-        except PlaywrightError:
+        except PlaywrightError as error:
+            self._write_trace("cdp_connect_failed", endpoint=self.endpoint, error=str(error))
             return False
+        self._write_trace("cdp_connected", endpoint=self.endpoint)
         self._state = ChromeStatus(state="connected", connected=True)
         return True
+
+    def _set_process_exit_error(self, returncode: int) -> None:
+        self._write_trace("chrome_exited", returncode=returncode)
+        self._state = ChromeStatus(
+            state="error",
+            connected=False,
+            message=(
+                "Chrome exited before its local debugging endpoint responded "
+                f"(exit code {returncode}). See data/logs/chrome-manager.jsonl "
+                "and data/logs/chrome-stderr.log."
+            ),
+        )
+
+    def _write_trace(self, event: str, **details: object) -> None:
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            **details,
+        }
+        try:
+            self._logs_dir.mkdir(parents=True, exist_ok=True)
+            with self._trace_log_path.open("a", encoding="utf-8") as trace_log:
+                trace_log.write(json.dumps(record, default=str) + "\n")
+        except OSError:
+            pass
 
     @staticmethod
     async def _target_id_for_page(page: Page) -> str | None:
