@@ -42,7 +42,7 @@
 - FastAPI 服務目前使用 `127.0.0.1:8000`；Chrome CDP 連線會依序嘗試設定 host、`127.0.0.1`、`localhost`、`[::1]`，兼容 IPv4/IPv6 loopback binding。
 - 專用 Chrome profile 位於 `data/chrome-profile`，已完成啟動、持久化與重連實機驗證，並會在啟動前清理 stale profile lock。
 - 目前服務已連接專用 Chrome；新程序啟動後仍需呼叫 `POST /api/chrome/start` 重新建立 Playwright CDP 連線。
-- 完整測試結果：`58 passed`。另有 2 個來自 Starlette／Python 3.14 的上游棄用警告。
+- 完整測試結果：`57 passed`。另有 2 個來自 Starlette／Python 3.14 的上游棄用警告。
 - VS Code 對 `src/` 與 `tests/` 無診斷錯誤。
 
 ## 已完成
@@ -133,7 +133,7 @@
 - 訊息卡片單則 `Copy` 按鈕已完成，`Gemini` 回覆優先複製 `response_markdown`，`You` 訊息複製原始輸入文字。
 - `Connect Chrome` 卡在 `Checking Chrome...` 的前端狀態已定位並修正：透過實際端點驗證確認 Chrome 已啟動，問題根因為 stale UI 狀態與缺失的 `refreshChromeAndTabs` helper；重新載入前端後可正常刷新狀態。
 - 每個 turn 的 Markdown 輸出已補上 `Sent:` 與 `Completed:` 時間戳，便於分析與交接。
-- 專案測試已驗證：`58 passed`，0 failed；相關 UI 改動未造成回歸。
+- 專案測試已驗證：`57 passed`，0 failed；相關 UI 改動未造成回歸。
 
 ### 待驗證
 
