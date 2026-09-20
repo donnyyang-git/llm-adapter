@@ -4,9 +4,9 @@
 | --- | --- |
 | 交接 ID | `LLMA-HO-20260920-125729-03` |
 | 建立時間 | `2026-09-20T12:21:30+08:00` |
-| 最後更新時間 | `2026-09-20T15:47:00+08:00` |
+| 最後更新時間 | `2026-09-20T22:43:00+08:00` |
 | 工作區 | `llm_adapter` |
-| 接續起點 | 完成訊息卡片單則複製與更新交接紀錄 |
+| 接續起點 | Gemini artifact 多片段 / 預覽切換整理完成，待 commit/push |
 
 ## 開發歷程
 
@@ -36,13 +36,19 @@
 | 2026-09-20T16:40:00+08:00 | Gemini tab 復原入口 | `New Gemini chat` 新增無選取 tab 時的 fallback：若目前沒有可用 Gemini tab，會在專用 Chrome 內直接開啟新的 Gemini 分頁並重新選取；前端同步保留按鈕可用與空狀態引導。 |
 | 2026-09-20T17:05:00+08:00 | session rebind 與空狀態強化 | 新增 `Rebind session`：當舊 session 被切到另一個 Gemini tab 時，可手動把它接回目前選取的 tab；前端空狀態與 composer 文案改成會提示「已關閉 tab / 可重新開啟」。 |
 | 2026-09-20T17:20:00+08:00 | Chrome connected 但 browser 未重建 | 補上 `_ensure_browser_connected()`：當右上顯示 connected 但 Playwright browser 仍是空的時，`list_tabs` / `get_page` / `New Gemini chat` 會先自動重連再執行，避免使用者看到 connected 卻無法開新 tab。 |
+| 2026-09-20T18:05:00+08:00 | Gemini 回覆附圖落地 | 新增回覆卡片 PNG 擷取、`/artifacts` 靜態掛載與 `data/conversations/_artifacts/<session>/<turn>.png` 儲存流程，讓 UI 可保留 Gemini 原始視覺畫面。 |
+| 2026-09-20T18:35:00+08:00 | artifact 診斷腳本與前端切換器 | 新增 `scripts/probe_gemini_artifact.py` 與 `scripts/README.md`，並在前端加入 `程式碼 / 預覽` artifact 面板。 |
+| 2026-09-20T18:55:00+08:00 | Monaco 完整程式碼擷取 | 確認 Gemini code artifact 來源是 Monaco editor model；改由 `window.monaco.editor.getModels()` 擷取完整 code，避免 HTML/JS 被截斷。 |
+| 2026-09-20T19:20:00+08:00 | 多 artifact 結構化保存 | 新增 `ResponseArtifact`、`response_artifacts[]`，支援一則回覆對應多個程式片段，並保留 legacy `response_artifact_code` / `response_image_path` 相容層。 |
+| 2026-09-20T19:35:00+08:00 | artifact ID 與後端防禦修正 | `turn_automation` 送出的 artifact payload 會補 `artifact_id`；service 端也會自動補齊缺失 ID，避免 runtime validation error。 |
+| 2026-09-20T19:55:00+08:00 | 摘要與預覽 UX 收斂 | 保留 Gemini 原本 1/2/3 摘要、支援每個 artifact 的局部摘要、點左側 tab 自動對應 session，並限制只有真正 HTML artifact 才顯示預覽，移除空白/假 preview。 |
 
 ## 目前狀態
 
 - FastAPI 服務目前使用 `127.0.0.1:8000`；Chrome CDP 連線會依序嘗試設定 host、`127.0.0.1`、`localhost`、`[::1]`，兼容 IPv4/IPv6 loopback binding。
 - 專用 Chrome profile 位於 `data/chrome-profile`，已完成啟動、持久化與重連實機驗證，並會在啟動前清理 stale profile lock。
 - 目前服務已連接專用 Chrome；新程序啟動後仍需呼叫 `POST /api/chrome/start` 重新建立 Playwright CDP 連線。
-- 完整測試結果：`57 passed`。另有 2 個來自 Starlette／Python 3.14 的上游棄用警告。
+- 先前完整測試結果：`57 passed`。本波 artifact 相關回歸測試結果：`36 passed, 2 warnings`。
 - VS Code 對 `src/` 與 `tests/` 無診斷錯誤。
 
 ## 已完成
@@ -62,6 +68,8 @@
 - 送題前記錄模型訊息 baseline，只擷取新回答。
 - 使用 `model-response > message-content` 擷取純文字與 HTML。
 - 使用 `markdownify` 轉換標題、清單、程式碼、表格、引用與連結。
+- 會先切換 Gemini 的 `預覽` / `程式碼` 視圖抓摘要，再從 Monaco model 擷取完整 artifact code。
+- 支援從單一回答中拆出多個 code block artifact，並保存個別摘要。
 - 回答完成條件：停止生成、輸入框可編輯、內容持續穩定。
 - 首字 timeout、總回答 timeout、partial 與 failed 保存。
 
@@ -69,6 +77,8 @@
 
 - session／turn Pydantic schema 與狀態驗證。
 - JSON、Markdown 同目錄暫存及 `os.replace` 原子寫入。
+- 每輪可保存 `response_artifacts[]`、legacy artifact code 與回覆附圖路徑。
+- 附圖實體檔落在 `data/conversations/_artifacts/<session>/<turn>.png`。
 - pending-first：確認 `pending` 已落盤後才呼叫 Gemini sender。
 - 每個 tab 使用 `asyncio.Lock`，完成、partial 或 failed 後才釋放。
 - 服務重啟後若最後一輪仍為 `pending`／`generating`，禁止直接重送。
@@ -101,6 +111,8 @@
 
 - 根路由提供原生 HTML/CSS/JavaScript 單頁聊天介面，靜態資源掛載於 `/static`。
 - 頁面顯示 Chrome 連線狀態、Gemini tab 清單、選取狀態、對話歷史、生成中與錯誤訊息。
+- `Gemini` 訊息可顯示多個 artifact 卡片，包含個別摘要與 `程式碼` / `預覽` 切換。
+- 左側 Gemini tab 點選後，若能對應到同一 `tab_id` 的本機 session，右側會自動切換載入該 session。
 - session ID 保存於瀏覽器 localStorage；頁面重新整理時會載入 persisted session 與全部 turns。
 - 最後一輪為 pending 或 generating 時，頁面才建立 EventSource；SSE 斷線後先重新讀取 session，再以最大 15 秒的遞增延遲連線，不會重新送題。
 - 回答完成、partial 或 failed 後關閉 SSE 並恢復輸入；可對 active turn 呼叫 recapture。
@@ -133,12 +145,14 @@
 - 訊息卡片單則 `Copy` 按鈕已完成，`Gemini` 回覆優先複製 `response_markdown`，`You` 訊息複製原始輸入文字。
 - `Connect Chrome` 卡在 `Checking Chrome...` 的前端狀態已定位並修正：透過實際端點驗證確認 Chrome 已啟動，問題根因為 stale UI 狀態與缺失的 `refreshChromeAndTabs` helper；重新載入前端後可正常刷新狀態。
 - 每個 turn 的 Markdown 輸出已補上 `Sent:` 與 `Completed:` 時間戳，便於分析與交接。
+- Gemini artifact 現在會保存完整程式碼、個別摘要與多段 code block 結構，並可在前端逐一切換。
+- Preview UI 已限制為真正 HTML artifact 才顯示，避免一般程式碼回答出現空白或誤導性的預覽框。
 - 專案測試已驗證：`57 passed`，0 failed；相關 UI 改動未造成回歸。
 
 ### 待驗證
 
 1. `New Gemini chat` 的 Gemini 導頁、空白聊天 readiness 與歷史 session 載入的 Windows 實機行為。
-2. 長回答、重新擷取與回答期間關閉 tab 的 Windows 實機驗收。
+2. 多 artifact 回覆在真實 Gemini 畫面下的長流程驗收，包含切換 tab、自動載入 session 與 HTML preview。
 3. 讀取/寫入 `data/chrome-profile` 在不同 Windows 環境下的穩定性，確認不受日常 Chrome 影響。
 
 ### 下一步

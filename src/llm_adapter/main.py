@@ -80,6 +80,12 @@ def create_app(
 
     app = FastAPI(title="LLM Adapter", version="0.1.0", lifespan=lifespan)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    # [修改] 2026-09-20 18:05 原因: 前端要能直接載入每則 Gemini 回覆對應的截圖。 說明: 將 conversations/_artifacts 掛成唯讀靜態路徑，供訊息卡片附圖使用。
+    app.mount(
+        "/artifacts",
+        StaticFiles(directory=settings.conversation_artifacts_dir, check_dir=False),
+        name="artifacts",
+    )
 
     @app.get("/", include_in_schema=False)
     async def chat_page() -> FileResponse:

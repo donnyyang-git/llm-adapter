@@ -145,6 +145,7 @@ def test_session_api_persists_pending_before_single_send(tmp_path) -> None:
     assert create_response.status_code == 201
     assert message_response.status_code == 202
     assert message_response.json()["turns"][-1]["status"] == "generating"
+    assert message_response.json()["turns"][-1]["response_artifacts"] == []
     assert load_response.json() == message_response.json()
     assert duplicate_response.status_code == 409
     assert sent == [("tab-1", "Question")]

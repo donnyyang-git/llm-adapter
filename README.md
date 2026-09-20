@@ -1,6 +1,6 @@
 # LLM Adapter
 
-只在本機執行的 Gemini 對話保存器。它會啟動一個使用獨立設定檔的專用 Chrome，讓你在本機網頁介面中選擇 Gemini 分頁、逐題提問，並將每個對話保存為 JSON 與 Markdown。
+只在本機執行的 Gemini 對話保存器。它會啟動一個使用獨立設定檔的專用 Chrome，讓你在本機網頁介面中選擇 Gemini 分頁、逐題提問，並將每個對話保存為 JSON、Markdown，以及 Gemini artifact 相關的程式碼 / 摘要 / 預覽附圖。
 
 服務只監聽 `127.0.0.1`，不會讀取或接管日常使用的 Chrome。完整產品範圍與技術規劃請參閱 [llm_adapter.md](llm_adapter.md)。
 
@@ -102,9 +102,10 @@ git stash pop
 ```text
 data/conversations/<session-id>.json
 data/conversations/<session-id>.md
+data/conversations/_artifacts/<session-id>/<turn-id>.png
 ```
 
-`.json` 保存完整結構與狀態，`.md` 方便閱讀、搜尋或備份。`data/` 已由 Git 排除，包含專用 Chrome 的登入狀態；不要提交、分享或刪除 `data/chrome-profile`，除非你要清除專用 Chrome 的登入狀態。若要備份對話，請只複製 `data/conversations/`。
+`.json` 保存完整結構與狀態，包含每輪 `response_artifacts`、legacy artifact 欄位與附圖路徑；`.md` 方便閱讀、搜尋或備份；`_artifacts/` 保存 Gemini 回覆卡片的 PNG 附圖。`data/` 已由 Git 排除，包含專用 Chrome 的登入狀態；不要提交、分享或刪除 `data/chrome-profile`，除非你要清除專用 Chrome 的登入狀態。若要備份對話，請一併複製 `data/conversations/` 下的 `.json`、`.md` 與 `_artifacts/`。
 
 要將歷史對話帶到另一台電腦時，在兩邊服務都停止的情況下，複製來源電腦的 `data/conversations/` 到目標電腦相同位置。目標電腦啟動後可在 `Saved conversations` 查看它們；若該筆紀錄所屬的 Gemini 分頁不在目前專用 Chrome 中，介面會唯讀顯示，這是避免接續到錯誤對話的保護機制。
 
@@ -217,6 +218,16 @@ Remove-Item .\data\chrome-profile -Recurse -Force
 3. 每則訊息卡片右上角都有 `Copy` 按鈕，可複製單則 `You` 訊息或 `Gemini` 回覆；`Gemini` 卡片會優先複製 Markdown 原文，必要時再退回純文字內容。
 4. 依需求選擇 `New local record` 或 `New Gemini chat`；也可直接在下方輸入問題並按 `Send question`，系統會建立本機對話紀錄。
 5. 等待 Gemini 產生回覆。產生期間請不要再送出下一題；完成後才可繼續輸入下一題。
+
+### Gemini artifact 呈現
+
+當 Gemini 回覆包含程式碼 artifact、HTML 預覽或多段 code block 時，介面會採下列方式呈現：
+
+- 訊息正文優先保留摘要，不再把整段 HTML / 程式碼直接塞在文字區。
+- 每個 artifact 會以獨立卡片顯示，支援個別標題、摘要與 `程式碼` 分頁。
+- 只有真正的 HTML artifact 才會顯示 `預覽` 分頁；一般文字或單純程式碼回答不會再顯示空白預覽框。
+- 左側選取某個 Gemini tab 時，若本機歷史中存在相同 `tab_id` 的 session，右側會自動載入對應 session。
+- 若要診斷 Gemini `程式碼 / 預覽` 畫面擷取問題，可使用 `scripts/probe_gemini_artifact.py`，輸出會寫到 `data/logs/gemini-artifact-probe.json`。
 
 ### Chrome connected / Reconnect Chrome
 

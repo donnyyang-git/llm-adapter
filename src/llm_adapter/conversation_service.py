@@ -4,11 +4,12 @@ from datetime import datetime
 from uuid import uuid4
 
 from llm_adapter.event_broker import SessionEvent, SessionEventBroker
-from llm_adapter.models import ConversationSession, ConversationTurn, TabInfo, utc_now
+from llm_adapter.models import ConversationSession, ConversationTurn, ResponseArtifact, TabInfo, utc_now
 from llm_adapter.storage import ConversationStore
 
 
 QuestionSender = Callable[[str, str], Awaitable[None]]
+ArtifactPayload = list[ResponseArtifact | dict[str, object]] | None
 
 
 class TabBusyError(RuntimeError):
@@ -118,11 +119,17 @@ class ConversationService:
         session_id: str,
         response_text: str,
         response_markdown: str,
+        response_image_bytes: bytes | None = None,
+        response_artifact_code: str = "",
+        response_artifacts: ArtifactPayload = None,
     ) -> ConversationSession:
         return await self._finish_turn(
             session_id,
             response_text=response_text,
             response_markdown=response_markdown,
+            response_artifact_code=response_artifact_code,
+            response_image_bytes=response_image_bytes,
+            response_artifacts=response_artifacts,
             status="completed",
             error=None,
         )
@@ -132,13 +139,28 @@ class ConversationService:
         session_id: str,
         response_text: str,
         response_markdown: str,
+        response_image_bytes: bytes | None = None,
+        response_artifact_code: str = "",
+        response_artifacts: ArtifactPayload = None,
     ) -> ConversationSession:
         session, turn = await self._get_active_turn(session_id)
+        image_path = await self._save_response_image(
+            session.session_id, turn.turn_id, response_image_bytes
+        )
+        artifacts, legacy_code, legacy_image_path = self._merge_response_artifacts(
+            response_artifacts=response_artifacts,
+            response_artifact_code=response_artifact_code,
+            response_image_path=image_path or turn.response_image_path,
+            existing_artifacts=turn.response_artifacts,
+        )
         session.turns[-1] = ConversationTurn.model_validate(
             {
                 **turn.model_dump(),
                 "response_text": response_text,
                 "response_markdown": response_markdown,
+                "response_artifacts": [artifact.model_dump() for artifact in artifacts],
+                "response_artifact_code": legacy_code,
+                "response_image_path": legacy_image_path,
             }
         )
         session.updated_at = self.now()
@@ -186,21 +208,31 @@ class ConversationService:
         response_text: str,
         response_markdown: str,
         error: str,
+        response_image_bytes: bytes | None = None,
+        response_artifact_code: str = "",
+        response_artifacts: ArtifactPayload = None,
     ) -> ConversationSession:
         return await self._finish_turn(
             session_id,
             response_text=response_text,
             response_markdown=response_markdown,
+            response_artifact_code=response_artifact_code,
+            response_image_bytes=response_image_bytes,
+            response_artifacts=response_artifacts,
             status="partial",
             error=error,
         )
 
     async def fail_turn(self, session_id: str, error: str) -> ConversationSession:
         _, turn = await self._get_active_turn(session_id)
+        # [修改] 2026-09-20 18:05 原因: turn 失敗收尾時仍需保留先前已擷取的回覆附圖。 說明: 失敗路徑不重新產生圖片，改沿用既有 response_image_path。
         return await self._finish_turn(
             session_id,
             response_text=turn.response_text,
             response_markdown=turn.response_markdown,
+            response_artifact_code=turn.response_artifact_code,
+            response_image_bytes=None,
+            response_artifacts=turn.response_artifacts,
             status="failed",
             error=error,
         )
@@ -211,16 +243,31 @@ class ConversationService:
         *,
         response_text: str,
         response_markdown: str,
+        response_artifact_code: str,
+        response_image_bytes: bytes | None,
+        response_artifacts: ArtifactPayload,
         status: str,
         error: str | None,
     ) -> ConversationSession:
         session, turn = await self._get_active_turn(session_id)
         completed_at = self.now()
+        image_path = await self._save_response_image(
+            session.session_id, turn.turn_id, response_image_bytes
+        )
+        artifacts, legacy_code, legacy_image_path = self._merge_response_artifacts(
+            response_artifacts=response_artifacts,
+            response_artifact_code=response_artifact_code,
+            response_image_path=image_path or turn.response_image_path,
+            existing_artifacts=turn.response_artifacts,
+        )
         session.turns[-1] = ConversationTurn.model_validate(
             {
                 **turn.model_dump(),
                 "response_text": response_text,
                 "response_markdown": response_markdown,
+                "response_artifacts": [artifact.model_dump() for artifact in artifacts],
+                "response_artifact_code": legacy_code,
+                "response_image_path": legacy_image_path,
                 "completed_at": completed_at,
                 "status": status,
                 "error": error,
@@ -260,6 +307,85 @@ class ConversationService:
     async def _save(self, session: ConversationSession) -> None:
         await asyncio.to_thread(self.store.save, session)
 
+    def _merge_response_artifacts(
+        self,
+        *,
+        response_artifacts: ArtifactPayload,
+        response_artifact_code: str,
+        response_image_path: str,
+        existing_artifacts: list[ResponseArtifact],
+    ) -> tuple[list[ResponseArtifact], str, str]:
+        # [修改] 2026-09-20 19:20 原因: 新流程要支援多 artifacts，但舊 session 仍可能只有單一 code/image 欄位。 說明: 將新舊資料合併成統一 artifact 陣列，並同步維持 legacy 主 artifact 欄位。
+        artifacts: list[ResponseArtifact] = []
+        if response_artifacts:
+            artifacts = self._coerce_response_artifacts(response_artifacts)
+        elif existing_artifacts:
+            artifacts = [artifact.model_copy(deep=True) for artifact in existing_artifacts]
+        elif response_artifact_code or response_image_path:
+            preview_type = "none"
+            normalized_code = response_artifact_code.lstrip().lower()
+            if normalized_code.startswith("<!doctype html>") or normalized_code.startswith("<html"):
+                preview_type = "html"
+            elif response_artifact_code:
+                preview_type = "code"
+            elif response_image_path:
+                preview_type = "image"
+            artifacts = [
+                ResponseArtifact(
+                    artifact_id="artifact-1",
+                    title="Generated artifact",
+                    kind="gemini-ui" if response_artifact_code else "code-block",
+                    language="html" if preview_type == "html" else "",
+                    code=response_artifact_code,
+                    preview_type=preview_type,
+                    image_path=response_image_path,
+                )
+            ]
+
+        if artifacts and response_artifact_code and not artifacts[0].code:
+            artifacts[0] = artifacts[0].model_copy(update={"code": response_artifact_code})
+        if artifacts and response_image_path and not artifacts[0].image_path:
+            artifacts[0] = artifacts[0].model_copy(update={"image_path": response_image_path})
+
+        legacy_code = artifacts[0].code if artifacts else response_artifact_code
+        legacy_image_path = (
+            artifacts[0].image_path if artifacts and artifacts[0].image_path else response_image_path
+        )
+        return artifacts, legacy_code, legacy_image_path
+
+    def _coerce_response_artifacts(
+        self, response_artifacts: ArtifactPayload
+    ) -> list[ResponseArtifact]:
+        if not response_artifacts:
+            return []
+
+        coerced: list[ResponseArtifact] = []
+        for index, artifact in enumerate(response_artifacts, start=1):
+            if isinstance(artifact, ResponseArtifact):
+                coerced.append(
+                    artifact if artifact.artifact_id else artifact.model_copy(update={"artifact_id": f"artifact-{index}"})
+                )
+                continue
+
+            artifact_payload = dict(artifact)
+            artifact_payload.setdefault("artifact_id", f"artifact-{index}")
+            coerced.append(ResponseArtifact.model_validate(artifact_payload))
+
+        return coerced
+
+    async def _save_response_image(
+        self,
+        session_id: str,
+        turn_id: str,
+        response_image_bytes: bytes | None,
+    ) -> str:
+        # [修改] 2026-09-20 18:05 原因: 回覆圖片要和文字更新一起持久化，避免前端看到不存在的 URL。 說明: 只有拿到新的截圖 bytes 時才寫檔，否則維持既有圖片路徑。
+        if response_image_bytes is None:
+            return ""
+        return await asyncio.to_thread(
+            self.store.save_turn_image, session_id, turn_id, response_image_bytes
+        )
+
     async def _publish(
         self,
         event: str,
@@ -275,6 +401,9 @@ class ConversationService:
                     "status": turn.status,
                     "response_text": turn.response_text,
                     "response_markdown": turn.response_markdown,
+                    "response_artifacts": [artifact.model_dump() for artifact in turn.response_artifacts],
+                    "response_artifact_code": turn.response_artifact_code,
+                    "response_image_path": turn.response_image_path,
                     "error": turn.error,
                 },
             )

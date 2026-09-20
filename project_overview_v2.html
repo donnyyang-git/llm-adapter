@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LLM Adapter 系統架構圖</title>
+    <style>
+      :root {
+        --bg1: #eef7ff;
+        --bg2: #f7fbff;
+        --ink: #0f172a;
+        --muted: #475569;
+        --line: #cbd5e1;
+        --blue: #2563eb;
+        --blue-soft: #dbeafe;
+        --cyan: #06b6d4;
+        --cyan-soft: #cffafe;
+        --green: #16a34a;
+        --green-soft: #dcfce7;
+        --amber: #d97706;
+        --amber-soft: #fef3c7;
+        --red: #dc2626;
+        --red-soft: #fee2e2;
+        --purple: #7c3aed;
+        --purple-soft: #ede9fe;
+        --card: #ffffff;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, var(--bg1), var(--bg2));
+        color: var(--ink);
+        font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+      }
+
+      .page {
+        max-width: 1320px;
+        margin: 0 auto;
+        padding: 36px 18px 80px;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 45%, #0ea5e9 100%);
+        border-radius: 22px;
+        padding: 28px 32px;
+        color: white;
+        box-shadow: 0 22px 50px rgba(37, 99, 235, 0.18);
+      }
+
+      .header h1 {
+        margin: 0 0 8px;
+        font-size: 2.25rem;
+      }
+
+      .header p {
+        margin: 0;
+        line-height: 1.7;
+        color: rgba(255,255,255,0.9);
+        max-width: 980px;
+      }
+
+      .section {
+        background: rgba(255,255,255,0.85);
+        border: 1px solid rgba(148,163,184,0.35);
+        border-radius: 18px;
+        padding: 24px 22px 22px;
+        margin-top: 26px;
+        box-shadow: 0 14px 28px rgba(15, 23, 42, 0.04);
+      }
+
+      .section h2 {
+        margin: 0 0 14px;
+        font-size: 1.5rem;
+      }
+
+      .diagram-shell {
+        background: #f8fbff;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 16px;
+        overflow: auto;
+      }
+
+      svg {
+        display: block;
+        width: 100%;
+        min-width: 1100px;
+        height: auto;
+      }
+
+      .card {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 16px;
+        margin-top: 16px;
+      }
+
+      .tile {
+        background: white;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 16px 16px 12px;
+      }
+
+      .tile h3 {
+        margin: 0 0 8px;
+        font-size: 1.08rem;
+      }
+
+      .tile p {
+        margin: 0;
+        font-size: 0.96rem;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .badge {
+        display: inline-block;
+        background: rgba(255,255,255,0.18);
+        border: 1px solid rgba(255,255,255,0.28);
+        color: white;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        padding: 6px 10px;
+        margin-bottom: 12px;
+      }
+
+      .node {
+        stroke: rgba(15, 23, 42, 0.18);
+        stroke-width: 2;
+      }
+
+      .node-blue { fill: var(--blue-soft); stroke: var(--blue); }
+      .node-cyan { fill: var(--cyan-soft); stroke: var(--cyan); }
+      .node-green { fill: var(--green-soft); stroke: var(--green); }
+      .node-amber { fill: var(--amber-soft); stroke: var(--amber); }
+      .node-red { fill: var(--red-soft); stroke: var(--red); }
+      .node-purple { fill: var(--purple-soft); stroke: var(--purple); }
+
+      .title {
+        font-size: 19px;
+        font-weight: 700;
+        fill: var(--ink);
+      }
+
+      .sub {
+        font-size: 13px;
+        fill: var(--muted);
+      }
+
+      .center {
+        text-anchor: middle;
+      }
+
+      .arrow {
+        stroke: #475569;
+        stroke-width: 2.2;
+        fill: none;
+        marker-end: url(#arrowhead);
+      }
+
+      .note {
+        margin-top: 18px;
+        background: #eff6ff;
+        border-left: 5px solid var(--blue);
+        border-radius: 10px;
+        padding: 12px 14px;
+        color: var(--ink);
+        line-height: 1.7;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="badge">LLM Adapter</div>
+        <h1>本機 Gemini 對話保存器架構概覽</h1>
+        <p>
+          本專案使用「本機受控 Chrome + Python 後端 + 狀態機 + 本地存檔」的設計，把雲端對話流程轉成本地工作流，目的在於保留歷史、降低風險、避免污染日常 Chrome 與日常登入狀態。
+        </p>
+      </header>
+
+      <section class="section">
+        <h2>系統架構圖</h2>
+        <div class="diagram-shell">
+          <svg viewBox="0 0 1180 620" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LLM Adapter 架構圖">
+            <defs>
+              <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 Z" fill="#475569"/>
+              </marker>
+            </defs>
+
+            <rect x="48" y="138" width="170" height="112" rx="18" class="node node-blue"/>
+            <text x="133" y="182" class="title center">使用者瀏覽器</text>
+            <text x="133" y="206" class="sub center">本機 UI</text>
+            <text x="133" y="224" class="sub center">localhost:8000</text>
+
+            <rect x="270" y="110" width="208" height="180" rx="18" class="node node-cyan"/>
+            <text x="374" y="150" class="title center">FastAPI App</text>
+            <text x="374" y="176" class="sub center">路由入口</text>
+            <text x="374" y="198" class="sub center">Chrome 狀態 API</text>
+            <text x="374" y="220" class="sub center">Session / Turn API</text>
+            <text x="374" y="242" class="sub center">SSE 事件串流</text>
+
+            <rect x="540" y="68" width="226" height="258" rx="18" class="node node-amber"/>
+            <text x="653" y="110" class="title center">ChromeManager</text>
+            <text x="653" y="138" class="sub center">找到 Chrome 執行檔</text>
+            <text x="653" y="160" class="sub center">建立專用 profile</text>
+            <text x="653" y="182" class="sub center">CDP 連線重試</text>
+            <text x="653" y="204" class="sub center">Tab 掃描 / 選取</text>
+            <text x="653" y="226" class="sub center">IPv4 / IPv6 fallback</text>
+            <text x="653" y="248" class="sub center">stale lock 清理</text>
+            <text x="653" y="270" class="sub center">Chrome 連線狀態判定</text>
+
+            <rect x="820" y="94" width="180" height="90" rx="18" class="node node-green"/>
+            <text x="910" y="130" class="title center">專用 Chrome</text>
+            <text x="910" y="154" class="sub center">獨立 profile</text>
+            <text x="910" y="172" class="sub center">Gemini 登入狀態保留</text>
+
+            <rect x="820" y="214" width="180" height="90" rx="18" class="node node-green"/>
+            <text x="910" y="250" class="title center">GeminiAdapter</text>
+            <text x="910" y="274" class="sub center">定位輸入框</text>
+            <text x="910" y="292" class="sub center">送出 / 擷取回答</text>
+
+            <rect x="332" y="395" width="308" height="120" rx="18" class="node node-red"/>
+            <text x="486" y="434" class="title center">ConversationService</text>
+            <text x="486" y="460" class="sub center">turn 狀態機</text>
+            <text x="486" y="482" class="sub center">tab 鎖 / pending / generating / completed</text>
+            <text x="486" y="500" class="sub center">partial / failed / recapture</text>
+
+            <rect x="80" y="400" width="210" height="110" rx="18" class="node node-purple"/>
+            <text x="185" y="440" class="title center">ConversationStore</text>
+            <text x="185" y="466" class="sub center">JSON + Markdown</text>
+            <text x="185" y="488" class="sub center">原子寫入 / 保護資料</text>
+
+            <path d="M218 194 H270" class="arrow"/>
+            <path d="M478 194 H540" class="arrow"/>
+            <path d="M766 170 H820" class="arrow"/>
+            <path d="M766 246 H820" class="arrow"/>
+            <path d="M910 184 V214" class="arrow"/>
+            <path d="M486 395 V323" class="arrow"/>
+            <path d="M300 466 H332" class="arrow"/>
+            <path d="M294 290 C 310 340, 360 350, 420 395" class="arrow"/>
+
+            <path d="M270 260 C 230 290, 185 350, 120 400" class="arrow"/>
+          </svg>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>各元件簡要說明</h2>
+        <div class="card">
+          <article class="tile">
+            <h3>使用者瀏覽器</h3>
+            <p>開啟本機網站，透過 HTML / JS / SSE 操作 Chrome 狀態、選擇分頁、送出問題與觀察結果。</p>
+          </article>
+
+          <article class="tile">
+            <h3>FastAPI App</h3>
+            <p>統一處理 API、事件串流、狀態協調與路由，讓前端與底層自動化邏輯彼此隔離。</p>
+          </article>
+
+          <article class="tile">
+            <h3>ChromeManager</h3>
+            <p>管理專用 Chrome 啟動、CDP 偵測、loopback fallback、profile lock 清理，以及 tab 列表更新。</p>
+          </article>
+
+          <article class="tile">
+            <h3>專用 Chrome</h3>
+            <p>使用獨立 profile，避免接管日常使用的 Chrome，並保留 Gemini 登入狀態。</p>
+          </article>
+
+          <article class="tile">
+            <h3>GeminiAdapter</h3>
+            <p>負責定位輸入框、判斷生成狀態、透過網頁版操作 Gemini，並抓取回覆內容。</p>
+          </article>
+
+          <article class="tile">
+            <h3>ConversationService</h3>
+            <p>處理一次對話的生命週期，管理 pending / generating / completed 等狀態與 tab 鎖。</p>
+          </article>
+
+          <article class="tile">
+            <h3>ConversationStore</h3>
+            <p>將 session 保存成 JSON 與 Markdown，確保歷史資料可讀、可回溯且可原子寫入。</p>
+          </article>
+        </div>
+
+        <div class="note">
+          <strong>設計原因：</strong> 這種分層方式可將風險收斂：Chrome 問題、Gemini 網頁變動、狀態機錯誤、資料保存錯誤能分別由不同模組負責，調試與維護都更加清楚。
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>近期互動式 Artifact 能力</h2>
+        <div class="card">
+          <article class="tile">
+            <h3>多 artifact 回覆</h3>
+            <p>單一 Gemini 回覆可拆成多個 artifact 保存，不再假設只會有一段程式碼。</p>
+          </article>
+
+          <article class="tile">
+            <h3>Monaco 程式碼擷取</h3>
+            <p>Gemini 的 code panel 會從 Monaco model 擷取完整內容，降低 HTML / JS 缺段風險。</p>
+          </article>
+
+          <article class="tile">
+            <h3>Code / Preview 切換</h3>
+            <p>前端會在每個 artifact 卡片上顯示程式碼與預覽切換，但只有 HTML artifact 才會提供 preview。</p>
+          </article>
+
+          <article class="tile">
+            <h3>本地附圖保存</h3>
+            <p>Gemini 回覆卡片截圖保存於 <code>data/conversations/_artifacts</code>，方便回看原始畫面與輸出佈局。</p>
+          </article>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

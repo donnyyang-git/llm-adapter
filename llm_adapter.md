@@ -27,7 +27,7 @@
 - 同一時間，同一個 Gemini 分頁只執行一個問題。
 - 採一般聊天模式：每次回答完成後，使用者再輸入下一題。
 - 每個對話同時保存 JSON 與 Markdown，預設永久保留。
-- 第一版不保存圖片、附件、語音、Canvas 或完整網頁 HTML。
+- 第一版會保存 Gemini 回覆的結構化文字、程式碼 artifact 與回覆附圖，但仍不保存使用者上傳附件、語音或完整互動式 Canvas 狀態。
 - 不支援區域網路、公網部署、多帳號、多使用者或多工作並行。
 
 ## 三、核心技術決策
@@ -126,6 +126,10 @@ FastAPI Application
    - 程式碼區塊。
    - 表格。
    - 連結與引用。
+10. 若 Gemini 回覆包含 code artifact 或 HTML 預覽，需額外：
+   - 擷取 Monaco editor model 中的完整程式碼。
+   - 區分整體摘要與各 code block 前的局部摘要。
+   - 僅對真正的 HTML artifact 提供預覽視圖，避免把一般截圖誤當成可互動預覽。
 
 ### Phase 3：對話狀態與本地保存
 
@@ -141,6 +145,9 @@ FastAPI Application
    - question。
    - response text。
    - response Markdown。
+   - response artifacts（可為多筆，含標題、摘要、語言、code、preview type、image path）。
+   - response artifact code（legacy 主 artifact 相容欄位）。
+   - response image path（回覆附圖）。
    - sent at。
    - completed at。
    - status：pending、generating、completed、partial 或 failed。
@@ -150,6 +157,7 @@ FastAPI Application
 ```text
 data/conversations/<session-id>.json
 data/conversations/<session-id>.md
+data/conversations/_artifacts/<session-id>/<turn-id>.png
 ```
 
 5. 保存時機：

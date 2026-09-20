@@ -3,7 +3,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from llm_adapter.models import ConversationSession
+from llm_adapter.models import ConversationSession, ResponseArtifact
 
 
 SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
@@ -20,6 +20,18 @@ class ConversationStore:
         self._atomic_write(json_path, session.model_dump_json(indent=2) + "\n")
         self._atomic_write(markdown_path, self.render_markdown(session))
         return json_path, markdown_path
+
+    def save_turn_image(self, session_id: str, turn_id: str, content: bytes) -> str:
+        # [修改] 2026-09-20 18:05 原因: 需要把 Gemini 回覆的預覽截圖獨立落地，避免將 base64 直接塞進 session JSON。 說明: 將 PNG 存到 conversations/_artifacts 下，並回傳可供前端顯示的 URL 路徑。
+        if not SESSION_ID_PATTERN.fullmatch(session_id):
+            raise ValueError("Invalid session ID.")
+        if not SESSION_ID_PATTERN.fullmatch(turn_id):
+            raise ValueError("Invalid turn ID.")
+        image_directory = self.directory / "_artifacts" / session_id
+        image_directory.mkdir(parents=True, exist_ok=True)
+        image_path = image_directory / f"{turn_id}.png"
+        self._atomic_write_bytes(image_path, content)
+        return f"/artifacts/{session_id}/{turn_id}.png"
 
     def load(self, session_id: str) -> ConversationSession:
         return ConversationSession.model_validate_json(
@@ -58,6 +70,7 @@ class ConversationStore:
                     "",
                     turn.response_markdown or turn.response_text,
                     "",
+                    *ConversationStore._render_artifacts_markdown(turn.response_artifacts),
                     f"Sent: {turn.sent_at.isoformat()}",
                     f"Completed: {turn.completed_at.isoformat() if turn.completed_at else 'N/A'}",
                     "",
@@ -68,6 +81,21 @@ class ConversationStore:
                 lines.extend(["", f"Error: {turn.error}"])
             lines.append("")
         return "\n".join(lines).rstrip() + "\n"
+
+    @staticmethod
+    def _render_artifacts_markdown(artifacts: list[ResponseArtifact]) -> list[str]:
+        lines: list[str] = []
+        for artifact in artifacts:
+            # [修改] 2026-09-20 19:20 原因: 一則回覆可能有多個程式片段。 說明: markdown 輸出改逐一列出 artifact，保留標題、語言與預覽圖資訊。
+            lines.extend([f"#### {artifact.title}", ""])
+            if artifact.summary:
+                lines.extend([artifact.summary, ""])
+            if artifact.code:
+                language = artifact.language or "text"
+                lines.extend([f"```{language}", artifact.code, "```", ""])
+            if artifact.image_path:
+                lines.extend([f"![{artifact.title}]({artifact.image_path})", ""])
+        return lines
 
     def _path_for(self, session_id: str, suffix: str) -> Path:
         if not SESSION_ID_PATTERN.fullmatch(session_id):
@@ -82,6 +110,26 @@ class ConversationStore:
                 mode="w",
                 encoding="utf-8",
                 newline="\n",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary_file:
+                temporary_file.write(content)
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
+                temporary_path = Path(temporary_file.name)
+            os.replace(temporary_path, path)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _atomic_write_bytes(path: Path, content: bytes) -> None:
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
                 dir=path.parent,
                 prefix=f".{path.name}.",
                 suffix=".tmp",

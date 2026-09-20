@@ -68,12 +68,22 @@ class GeminiTurnAutomation:
 
             async def update(response):
                 await service.update_response(
-                    session_id, response.text, response.markdown
+                    session_id,
+                    response.text,
+                    response.markdown,
+                    response_image_bytes=response.screenshot_png,
+                    response_artifact_code=response.artifact_code,
+                    response_artifacts=self._artifacts_payload(response.artifacts),
                 )
 
             response = await self.monitor.wait(sample, update)
             return await service.complete_turn(
-                session_id, response.text, response.markdown
+                session_id,
+                response.text,
+                response.markdown,
+                response_image_bytes=response.screenshot_png,
+                response_artifact_code=response.artifact_code,
+                response_artifacts=self._artifacts_payload(response.artifacts),
             )
         except ResponseTimeoutError as error:
             if error.partial is not None:
@@ -82,7 +92,22 @@ class GeminiTurnAutomation:
                     error.partial.text,
                     error.partial.markdown,
                     str(error),
+                    response_image_bytes=error.partial.screenshot_png,
+                    response_artifact_code=error.partial.artifact_code,
+                    response_artifacts=self._artifacts_payload(error.partial.artifacts),
                 )
             return await service.fail_turn(session_id, str(error))
         except Exception as error:
             return await service.fail_turn(session_id, str(error))
+
+    @staticmethod
+    def _artifacts_payload(artifacts) -> list[dict[str, object]]:
+        payload = []
+        for index, artifact in enumerate(artifacts, start=1):
+            payload.append(
+                {
+                    "artifact_id": f"artifact-{index}",
+                    **artifact.model_dump(),
+                }
+            )
+        return payload

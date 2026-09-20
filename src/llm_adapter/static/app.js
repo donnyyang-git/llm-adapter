@@ -194,12 +194,225 @@ function renderSession() {
     elements.messageList.append(createMessage("You", turn.question, "user", null, turn.turn_id, userCopy));
     const responseText = turn.response_text || (activeStatuses.has(turn.status) ? "Waiting for Gemini response..." : "No response was captured.");
     const modelCopy = turn.response_markdown || responseText;
-    elements.messageList.append(createMessage("Gemini", responseText, "model", turn.error, turn.status, modelCopy));
+    elements.messageList.append(createMessage("Gemini", responseText, "model", turn.error, turn.status, modelCopy, turn.response_image_path, turn.response_text, turn.response_artifact_code, turn.response_markdown || turn.response_text, turn.response_artifacts || []));
   }
   elements.messageList.scrollTop = elements.messageList.scrollHeight;
 }
 
-function createMessage(author, text, kind, error, stateLabel, copyText) {
+function normalizeArtifactCode(rawText) {
+  // [修改] 2026-09-20 18:35 原因: Gemini code artifact 常混入 NBSP 與視覺換行，直接拿來預覽容易壞掉。 說明: 先做保守正規化，盡量修復 HTML / URL 被切斷的情況。
+  return rawText
+    .replace(/\u00A0/g, " ")
+    .replace(/,\s*\n\s+/g, ", ")
+    .replace(/\.\s*\n\s*([A-Za-z])/g, ".$1")
+    .replace(/\+\s*\n\s*\+/g, "+")
+    .replace(/([A-Za-z0-9_\/-])\n\s+([A-Za-z0-9_\/-])/g, "$1$2")
+    .trim();
+}
+
+function stripArtifactToolbarText(text) {
+  return text
+    .replace(/\n?(程式碼\s*\n\s*預覽(?:\s*\n\s*下載)?)/g, "")
+    .replace(/\n?(Code\s*\n\s*Preview(?:\s*\n\s*Download)?)/gi, "")
+    .replace(/\n?(程式碼預覽(?:\s*\n\s*下載)?)/g, "")
+    .trim();
+}
+
+function normalizeSummaryText(rawText = "") {
+  return rawText
+    .replace(/\u00A0/g, " ")
+    .replace(/\r\n/g, "\n")
+    .trim();
+}
+
+function extractArtifactSummary(sourceText = "", artifacts = []) {
+  // [修改] 2026-09-20 19:55 原因: Gemini 的摘要通常會和多個 code block 交錯出現，不能在第一個 code block 就截斷。 說明: 改為保留整段摘要，只移除 code fence 本體，讓 1/2/3 這類編號內容完整保留。
+  let summary = normalizeSummaryText(sourceText);
+  if (artifacts.length || summary.includes("```") || summary.includes("<html") || summary.includes("<!DOCTYPE html>")) {
+    summary = summary.replace(/```[a-zA-Z0-9_+-]*\n[\s\S]*?```/g, "");
+  }
+  return stripArtifactToolbarText(summary)
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function normalizeArtifacts(responseArtifacts = [], artifactCode = "", imagePath = "", sourceText = "") {
+  const normalizedArtifacts = Array.isArray(responseArtifacts)
+    ? responseArtifacts
+      .filter((artifact) => artifact && (artifact.code || artifact.image_path))
+      .map((artifact, index) => ({
+        artifact_id: artifact.artifact_id || `artifact-${index + 1}`,
+        title: artifact.title || `Code snippet ${index + 1}`,
+        summary: artifact.summary || "",
+        kind: artifact.kind || "code-block",
+        language: artifact.language || "",
+        code: artifact.code || "",
+        preview_type: artifact.preview_type || ((artifact.language || "").toLowerCase() === "html" ? "html" : artifact.code ? "code" : artifact.image_path ? "image" : "none"),
+        image_path: artifact.image_path || "",
+      }))
+    : [];
+
+  if (normalizedArtifacts.length) {
+    if (!normalizedArtifacts[0].image_path && imagePath) {
+      normalizedArtifacts[0].image_path = imagePath;
+    }
+    return normalizedArtifacts;
+  }
+
+  if (artifactCode.trim()) {
+    return [{
+      artifact_id: "artifact-1",
+      title: "Generated artifact",
+      summary: "",
+      kind: "gemini-ui",
+      language: artifactCode.trim().match(/^<!DOCTYPE html>|^<html[\s>]/i) ? "html" : "",
+      code: artifactCode.trim(),
+      preview_type: artifactCode.trim().match(/^<!DOCTYPE html>|^<html[\s>]/i) ? "html" : "code",
+      image_path: imagePath || "",
+    }];
+  }
+
+  const normalized = normalizeArtifactCode(sourceText);
+  const htmlStart = normalized.search(/<!DOCTYPE html>|<html[\s>]/i);
+  if (htmlStart >= 0) {
+    return [{
+      artifact_id: "artifact-1",
+      title: "Generated artifact",
+      summary: "",
+      kind: "gemini-ui",
+      language: "html",
+      code: normalized.slice(htmlStart).trim(),
+      preview_type: "html",
+      image_path: imagePath || "",
+    }];
+  }
+
+  const fenceMatch = normalized.match(/```([a-zA-Z0-9_-]+)?\n([\s\S]*?)```/);
+  if (fenceMatch) {
+    return [{
+      artifact_id: "artifact-1",
+      title: "Code snippet 1",
+      summary: "",
+      kind: "code-block",
+      language: (fenceMatch[1] || "").toLowerCase(),
+      code: fenceMatch[2].trim(),
+      preview_type: fenceMatch[1]?.toLowerCase() === "html" ? "html" : "code",
+      image_path: imagePath || "",
+    }];
+  }
+
+  return [];
+}
+
+function createArtifactPanel(artifact, copyText) {
+  const container = document.createElement("section");
+  container.className = "message-artifact";
+
+  const hasCode = Boolean(artifact?.code?.trim());
+  const hasHtmlPreview = Boolean(artifact?.preview_type === "html" && artifact?.code?.trim());
+  const hasPreview = hasHtmlPreview;
+  // [修改] 2026-09-20 19:55 原因: 空白預覽或空白程式碼會誤導成擷取成功。 說明: 預覽只保留真正的 HTML artifact，避免把一般 response screenshot 當成有效內容。
+  const activeTab = hasPreview && (!hasCode || hasHtmlPreview) ? "preview" : "code";
+
+  if (!hasCode && !hasPreview) {
+    return null;
+  }
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "message-artifact-toolbar";
+
+  if (artifact?.summary) {
+    const summary = document.createElement("div");
+    summary.className = "message-artifact-summary";
+    summary.textContent = artifact.summary;
+    container.append(summary);
+  }
+
+  const title = document.createElement("span");
+  title.className = "message-artifact-title";
+  title.textContent = artifact?.language ? `${artifact.title} · ${artifact.language}` : artifact.title;
+
+  const tabs = document.createElement("div");
+  tabs.className = "message-artifact-tabs";
+
+  const codeButton = document.createElement("button");
+  codeButton.type = "button";
+  codeButton.className = "message-artifact-tab";
+  codeButton.textContent = "程式碼";
+  codeButton.disabled = !hasCode;
+
+  const previewButton = document.createElement("button");
+  previewButton.type = "button";
+  previewButton.className = "message-artifact-tab";
+  previewButton.textContent = "預覽";
+  previewButton.disabled = !hasPreview;
+
+  tabs.append(codeButton, previewButton);
+  toolbar.append(title, tabs);
+
+  if (hasCode) {
+    const copyCodeButton = document.createElement("button");
+    copyCodeButton.type = "button";
+    copyCodeButton.className = "message-copy";
+    copyCodeButton.textContent = "Copy code";
+    copyCodeButton.title = "Copy generated code";
+    copyCodeButton.addEventListener("click", async () => {
+      try {
+        await copyTextToClipboard(artifact.code || copyText || "");
+        const originalText = copyCodeButton.textContent;
+        copyCodeButton.textContent = "Copied";
+        setTimeout(() => {
+          copyCodeButton.textContent = originalText;
+        }, 1000);
+      } catch {
+        copyCodeButton.textContent = "Failed";
+        setTimeout(() => {
+          copyCodeButton.textContent = "Copy code";
+        }, 1000);
+      }
+    });
+    toolbar.append(copyCodeButton);
+  }
+
+  const codePanel = document.createElement("div");
+  codePanel.className = "message-artifact-panel";
+  if (hasCode) {
+    const codeBlock = document.createElement("pre");
+    codeBlock.className = "message-artifact-code";
+    const codeNode = document.createElement("code");
+    codeNode.textContent = artifact.code.trim();
+    codeBlock.append(codeNode);
+    codePanel.append(codeBlock);
+  }
+
+  const previewPanel = document.createElement("div");
+  previewPanel.className = "message-artifact-panel";
+  if (hasHtmlPreview) {
+    const frame = document.createElement("iframe");
+    frame.className = "message-artifact-frame";
+    frame.loading = "lazy";
+    frame.referrerPolicy = "no-referrer";
+    frame.sandbox = "allow-scripts allow-same-origin";
+    frame.srcdoc = artifact.code.trim();
+    previewPanel.append(frame);
+  }
+
+  function setActiveTab(tabName) {
+    codeButton.setAttribute("aria-pressed", String(tabName === "code"));
+    previewButton.setAttribute("aria-pressed", String(tabName === "preview"));
+    codePanel.hidden = tabName !== "code";
+    previewPanel.hidden = tabName !== "preview";
+  }
+
+  codeButton.addEventListener("click", () => setActiveTab("code"));
+  previewButton.addEventListener("click", () => setActiveTab("preview"));
+  setActiveTab(activeTab);
+
+  container.append(toolbar, codePanel, previewPanel);
+  return container;
+}
+
+function createMessage(author, text, kind, error, stateLabel, copyText, imagePath = "", artifactSource = "", artifactCode = "", summarySource = "", responseArtifacts = []) {
   const article = document.createElement("article");
   article.className = `message message--${kind}`;
 
@@ -235,11 +448,30 @@ function createMessage(author, text, kind, error, stateLabel, copyText) {
 
   meta.append(name, status, copyButton);
 
+  const artifacts = kind === "model"
+    ? normalizeArtifacts(responseArtifacts, artifactCode || "", imagePath || "", summarySource || artifactSource || text)
+    : [];
+  const displayText = artifacts.length
+    ? extractArtifactSummary(summarySource || artifactSource || text, artifacts)
+    : text;
   const body = document.createElement("div");
   body.className = "message-body";
-  body.textContent = text;
+  body.textContent = displayText;
 
-  article.append(meta, body);
+  article.append(meta);
+  if (displayText) {
+    article.append(body);
+  }
+
+  if (kind === "model" && artifacts.length) {
+    // [修改] 2026-09-20 19:20 原因: 一則 Gemini 回覆可能同時包含多個程式片段。 說明: 改為逐一渲染 artifact 清單，而不是只顯示單一 code/preview 面板。
+    for (const artifact of artifacts) {
+      const panel = createArtifactPanel(artifact, copyText);
+      if (panel) {
+        article.append(panel);
+      }
+    }
+  }
 
   if (error) {
     const errorNode = document.createElement("p");
@@ -307,11 +539,19 @@ async function loadSession(sessionId) {
   renderSession();
 }
 
+function findSessionForTab(tabId) {
+  return state.history.find((session) => session.tab_id === tabId) || null;
+}
+
 async function selectTab(tabId) {
   // [修改] 2026-09-20 17:05 原因: 需要讓舊 session 先保留在畫面上，才能在選到新 Gemini tab 後執行 rebind。 說明: 只更新目前選取的 tab，不主動清除已載入的 session。
   await request("/api/tabs/select", { method: "POST", body: JSON.stringify({ tab_id: tabId }) });
   showNotice("");
   await refreshChromeAndTabs();
+  const matchingSession = findSessionForTab(tabId);
+  if (matchingSession && matchingSession.session_id !== state.session?.session_id) {
+    await loadSession(matchingSession.session_id);
+  }
 }
 
 async function rebindSession() {

@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LLM Adapter 使用者操作範例</title>
+    <style>
+      :root {
+        --bg: #eef6ff;
+        --panel: #ffffff;
+        --ink: #10213a;
+        --muted: #556780;
+        --line: #dfeaf7;
+        --blue: #2563eb;
+        --blue-soft: #e0edff;
+        --cyan: #0891b2;
+        --cyan-soft: #dff9ff;
+        --green: #16a34a;
+        --green-soft: #dafbe7;
+        --amber: #d97706;
+        --amber-soft: #fff2cf;
+        --purple: #7c3aed;
+        --purple-soft: #eee7ff;
+        --red: #dc2626;
+        --red-soft: #fee2e2;
+        --shadow: rgba(15, 23, 42, 0.08);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, #eff7ff 0%, #f8fbff 100%);
+        color: var(--ink);
+        font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+      }
+
+      .wrap {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 32px 18px 80px;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #0f172a 0%, #173d7a 45%, #0ea5e9 100%);
+        border-radius: 22px;
+        color: white;
+        padding: 28px 30px;
+        box-shadow: 0 18px 40px rgba(37, 99, 235, 0.18);
+      }
+
+      .header h1 {
+        margin: 0 0 10px;
+        font-size: 2.2rem;
+      }
+
+      .header p {
+        margin: 0;
+        line-height: 1.7;
+        color: rgba(255,255,255,0.9);
+      }
+
+      .tabs {
+        margin-top: 28px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: 0 12px 30px var(--shadow);
+        overflow: hidden;
+      }
+
+      .tab-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        background: #f8fbff;
+        padding: 10px 12px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .tab-button {
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--muted);
+        border-radius: 10px 10px 0 0;
+        padding: 12px 18px;
+        font-size: 0.98rem;
+        font-weight: 700;
+        cursor: pointer;
+        transition: 0.2s ease;
+      }
+
+      .tab-button.active {
+        background: white;
+        color: var(--blue);
+        border-color: var(--line);
+        border-bottom-color: white;
+      }
+
+      .tab-panels {
+        padding: 18px;
+      }
+
+      .panel {
+        display: none;
+      }
+
+      .panel.active {
+        display: block;
+      }
+
+      .scenario {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 18px;
+      }
+
+      .box {
+        background: linear-gradient(180deg, #ffffff, #f9fbff);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 18px;
+      }
+
+      .box h3 {
+        margin: 8px 0 16px;
+        font-size: 1.2rem;
+      }
+
+      .pill {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 5px 11px;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+      }
+
+      .pill.blue { background: var(--blue-soft); color: var(--blue); }
+      .pill.green { background: var(--green-soft); color: var(--green); }
+      .pill.purple { background: var(--purple-soft); color: var(--purple); }
+      .pill.amber { background: var(--amber-soft); color: var(--amber); }
+
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(110px, 1fr));
+        gap: 12px;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+
+      .node {
+        border-radius: 16px;
+        border: 1px solid var(--line);
+        padding: 12px 10px;
+        background: white;
+        min-height: 100px;
+        text-align: center;
+        box-shadow: 0 8px 18px rgba(17, 24, 39, 0.04);
+      }
+
+      .node .icon {
+        font-size: 1.8rem;
+        margin-bottom: 8px;
+        display: block;
+      }
+
+      .node strong {
+        display: block;
+        font-size: 0.88rem;
+        margin-bottom: 4px;
+      }
+
+      .node small {
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .arrow {
+        text-align: center;
+        color: var(--blue);
+        font-size: 1.8rem;
+        font-weight: 700;
+      }
+
+      .step-grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .step {
+        display: grid;
+        grid-template-columns: 34px 1fr;
+        gap: 12px;
+        align-items: start;
+        background: #f8fbff;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 12px;
+      }
+
+      .step-number {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 800;
+        color: white;
+        background: linear-gradient(135deg, var(--blue), var(--cyan));
+      }
+
+      .step p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .mini-card {
+        background: #f8fafc;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px;
+        margin-top: 14px;
+      }
+
+      .mini-card h4 {
+        margin: 0 0 8px;
+        font-size: 1rem;
+      }
+
+      .mini-card ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        line-height: 1.8;
+      }
+
+      .legend {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(120px, 1fr));
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: #f8fbff;
+        border: 1px solid var(--line);
+        padding: 8px 10px;
+        border-radius: 10px;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .legend-swatch {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+
+      .note {
+        margin-top: 16px;
+        border-left: 4px solid var(--blue);
+        background: var(--blue-soft);
+        color: var(--ink);
+        padding: 12px 14px;
+        border-radius: 10px;
+        line-height: 1.7;
+      }
+
+      @media (max-width: 980px) {
+        .scenario { grid-template-columns: 1fr; }
+        .flow { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+      }
+
+      @media (max-width: 580px) {
+        .flow { grid-template-columns: 1fr; }
+        .legend { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="header">
+        <h1>LLM Adapter 使用者角度操作範例</h1>
+        <p>這份頁面以「圖例 + 流程」方式說明使用者如何在本機環境中啟動 Chrome、切換 Gemini 分頁、發問與保存對話。</p>
+      </header>
+
+      <div class="tabs">
+        <div class="tab-buttons">
+          <button class="tab-button active" data-target="scene-1">範例 1：首次啟用</button>
+          <button class="tab-button" data-target="scene-2">範例 2：日常工作</button>
+          <button class="tab-button" data-target="scene-3">範例 3：歷史回看</button>
+        </div>
+
+        <div class="tab-panels">
+          <section class="panel active" id="scene-1">
+            <div class="scenario">
+              <div class="box">
+                <span class="pill blue">首次啟用</span>
+                <h3>新使用者的開場流程</h3>
+
+                <div class="flow">
+                  <div class="node">
+                    <span class="icon">🧭</span>
+                    <strong>啟動服務</strong>
+                    <small>開啟本機網頁</small>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node">
+                    <span class="icon">🌐</span>
+                    <strong>連接 Chrome</strong>
+                    <small>建立專用 profile</small>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node">
+                    <span class="icon">🔑</span>
+                    <strong>登入 Gemini</strong>
+                    <small>在專用瀏覽器中</small>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node">
+                    <span class="icon">💬</span>
+                    <strong>開始對話</strong>
+                    <small>選分頁並開始紀錄</small>
+                  </div>
+                </div>
+
+                <div class="step-grid">
+                  <div class="step">
+                    <div class="step-number">1</div>
+                    <p>在專案目錄啟動後端，打開本機入口，進入 LLM Adapter 主頁面。</p>
+                  </div>
+                  <div class="step">
+                    <div class="step-number">2</div>
+                    <p>點選 <strong>Connect Chrome</strong>，系統會啟動專用 Chrome 並避免污染原本的日常瀏覽器登入狀態。</p>
+                  </div>
+                  <div class="step">
+                    <div class="step-number">3</div>
+                    <p>在專用 Chrome 中登入 Google / Gemini，並開啟 Gemini 頁面。</p>
+                  </div>
+                  <div class="step">
+                    <div class="step-number">4</div>
+                    <p>返回本機介面按 Refresh，選擇正確的 Gemini 分頁，接著建立本地紀錄開始對話。</p>
+                  </div>
+                </div>
+
+                <div class="note">
+                  這個流程的核心，是「把一個專門的瀏覽器與本地會話連動起來」，讓使用者不會感到混亂，也能保留每次對話紀錄。
+                </div>
+              </div>
+
+              <div class="box">
+                <div class="mini-card">
+                  <h4>角色關係圖</h4>
+                  <div class="legend">
+                    <div class="legend-item"><span class="legend-swatch" style="background:#2563eb"></span>使用者</div>
+                    <div class="legend-item"><span class="legend-swatch" style="background:#16a34a"></span>本地頁面</div>
+                    <div class="legend-item"><span class="legend-swatch" style="background:#0891b2"></span>專用 Chrome</div>
+                    <div class="legend-item"><span class="legend-swatch" style="background:#7c3aed"></span>Gemini</div>
+                  </div>
+                </div>
+
+                <div class="mini-card">
+                  <h4>你會得到的效果</h4>
+                  <ul>
+                    <li>不必手動處理 API Key</li>
+                    <li>日常 Chrome 不受影響</li>
+                    <li>歷史紀錄會保存在本機資料夾</li>
+                    <li>後續可以直接重連同一個工作環境</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel" id="scene-2">
+            <div class="scenario">
+              <div class="box">
+                <span class="pill green">日常工作</span>
+                <h3>實際提問與追蹤流程</h3>
+
+                <div class="flow">
+                  <div class="node">
+                    <span class="icon">📋</span>
+                    <strong>選分頁</strong>
+                    <small>挑選目標會話</small>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node">
+                    <span class="icon">📝</span>
+                    <strong>建立紀錄</strong>
+                    <small>開新 local record</small>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node">
+                    <span class="icon">⚙️</span>
+                    <strong>送出問題</strong>
+                    <small>pending → generating</small>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node">
+                    <span class="icon">✅</span>
+                    <strong>完成回覆</strong>
+                    <small>保存並顯示結果</small>
+                  </div>
+                </div>
+
+                <div class="step-grid">
+                  <div class="step">
+                    <div class="step-number">1</div>
+                    <p>在頁面上選擇對應的 Gemini 分頁，確認該分頁就是你要繼續的會話。</p>
+                  </div>
+                  <div class="step">
+                    <div class="step-number">2</div>
+                    <p>點選建立新本地紀錄，等於為這一輪會話開一個可追蹤的本地工作區。</p>
+                  </div>
+                  <div class="step">
+                    <div class="step-number">3</div>
+                    <p>輸入問題後，系統會顯示狀態：<strong>pending</strong> → <strong>generating</strong> → <strong>completed</strong>。</p>
+                  </div>
+                  <div class="step">
+                    <div class="step-number">4</div>
+                    <p>回覆完成後，可直接在本機介面查看內容，也可複製原文、匯出紀錄或回顧歷史。</p>
+                  </div>
+                </div>
+
+                <div class="note">
+                  這個畫面讓使用者能直接感受到每一次互動的狀態變化，並不需要自己去追目前是「送出中」還是「已回覆」。
+                </div>
+              </div>
+
+              <div class="box">
+                <div class="mini-card">
+                  <h4>常見操作場景</h4>
+                  <ul>
+                    <li>研究整理與資料梳理</li>
+                    <li>程式碼問答與除錯</li>
+                    <li>Prompt 比較與案例測試</li>
+                  </ul>
+                </div>
+
+                <div class="mini-card">
+                  <h4>畫面上重要資訊</h4>
+                  <ul>
+                    <li>會話狀態</li>
+                    <li>每輪時間資訊</li>
+                    <li>回覆內容可複製</li>
+                    <li>artifact 的程式碼 / 預覽切換</li>
+                    <li>紀錄可保留於本機</li>
+                  </ul>
+                </div>
+
+                <div class="mini-card">
+                  <h4>Gemini Artifact 呈現</h4>
+                  <ul>
+                    <li>若 Gemini 產出多段程式碼，畫面會拆成多個 artifact 卡片。</li>
+                    <li>每個 artifact 可顯示自己的摘要與程式碼。</li>
+                    <li>只有 HTML artifact 才會顯示預覽，避免空白 preview 誤導使用者。</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel" id="scene-3">
+            <div class="scenario">
+              <div class="box">
+                <span class="pill purple">歷史回看</span>
+                <h3>回顧與繼續工作</h3>
+
+                <div class="flow">
+                  <div class="node">
+                    <span class="icon">🗂️</span>
+                    <strong>選舊紀錄</strong>
+                    <small>從 Saved conversations</small>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node">
+                    <span class="icon">🔎</span>
+                    <strong>檢查內容</strong>
+                    <small>查詢歷史與時間</small>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node">
+                    <span class="icon">🔁</span>
+                    <strong>回到會話</strong>
+                    <small>切回正確分頁</small>
+                  </div>
+                  <div class="arrow">→</div>
+                  <div class="node">
+                    <span class="icon">📌</span>
+                    <strong>繼續工作</strong>
+                    <small>接新問題或整理內容</small>
+                  </div>
+                </div>
+
+                <div class="step-grid">
+                  <div class="step">
+                    <div class="step-number">1</div>
+                    <p>如果該會話和當前 Gemini 分頁不一致，系統會提醒或切成唯讀模式；若左側重新選到同一個 Gemini tab，右側也會自動載入對應 session。</p>
+                  </div>
+                  <div class="step">
+                    <div class="step-number">2</div>
+                    <p>如果該會話和當前 Gemini 分頁不一致，系統會提醒或切成唯讀模式，避免錯誤接續。</p>
+                  </div>
+                  <div class="step">
+                    <div class="step-number">3</div>
+                    <p>需要繼續工作時，重新切回正確的分頁，保持上下文一致，然後接續新問題。</p>
+                  </div>
+                  <div class="step">
+                    <div class="step-number">4</div>
+                    <p>重新整理頁面後，系統會嘗試恢復先前的狀態，讓工作流更順暢。</p>
+                  </div>
+                </div>
+
+                <div class="note">
+                  這種設計的目的是讓使用者不會誤把舊對話接到錯誤分頁，避免歷史紀錄失真或上下文混淆。
+                </div>
+              </div>
+
+              <div class="box">
+                <div class="mini-card">
+                  <h4>回顧的價值</h4>
+                  <ul>
+                    <li>可以快速回溯問題與答案</li>
+                    <li>能看到每輪的時間節點</li>
+                    <li>可比較不同版本的思路</li>
+                  </ul>
+                </div>
+
+                <div class="mini-card">
+                  <h4>使用者心智模型</h4>
+                  <ul>
+                    <li>開啟服務 → 連 Chrome → 選分頁</li>
+                    <li>開始對話 → 追蹤狀態 → 完成回覆</li>
+                    <li>回看歷史 → 重新接續 → 保持連續性</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const tabs = document.querySelectorAll('.tab-button');
+      const panels = document.querySelectorAll('.panel');
+
+      tabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+          const target = tab.dataset.target;
+          tabs.forEach((btn) => btn.classList.toggle('active', btn === tab));
+          panels.forEach((panel) => panel.classList.toggle('active', panel.id === target));
+        });
+      });
+    </script>
+  </body>
+</html>

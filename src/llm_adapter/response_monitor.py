@@ -71,13 +71,37 @@ class ResponseMonitor:
                 else:
                     latest = current
 
+                # [修改] 2026-09-20 10:35 原因: Gemini 的 HTML / 程式碼回覆常會在短暫停頓後繼續長內容。 說明: 對 code-like 回覆使用更長的穩定窗口，避免只抓到前段就提早結束。
+                stable_seconds = self._stable_seconds_for(current)
                 if (
                     not current.generating
                     and current.input_editable
-                    and now - last_change_at >= self.stable_seconds
+                    and now - last_change_at >= stable_seconds
                 ):
                     return current
             elif latest is None and now - started_at >= self.first_response_timeout:
                 raise ResponseTimeoutError("first_response", None)
 
             await self.sleep(self.poll_interval)
+
+    def _stable_seconds_for(self, current: GeminiResponse) -> float:
+        if self._looks_like_code_response(current):
+            return max(self.stable_seconds, 6.0)
+        return self.stable_seconds
+
+    @staticmethod
+    def _looks_like_code_response(current: GeminiResponse) -> bool:
+        text = f"{current.text}\n{current.markdown}"
+        return any(
+            marker in text
+            for marker in (
+                "<!DOCTYPE html>",
+                "<html",
+                "<script",
+                "<style",
+                "```",
+                "function ",
+                "class ",
+                "import ",
+            )
+        )

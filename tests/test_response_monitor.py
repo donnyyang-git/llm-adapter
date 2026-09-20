@@ -54,6 +54,24 @@ async def test_completes_only_after_content_is_stable_and_ui_is_ready() -> None:
 
 
 @pytest.mark.asyncio
+async def test_code_like_response_waits_longer_before_completion() -> None:
+    clock = FakeClock()
+    samples = [
+        response("<!DOCTYPE html>\n<html>", generating=False, input_editable=True),
+        response("<!DOCTYPE html>\n<html>", generating=False, input_editable=True),
+    ]
+
+    async def sample() -> GeminiResponse:
+        return samples.pop(0) if len(samples) > 1 else samples[0]
+
+    monitor = ResponseMonitor(3, 10, 2, 1, monotonic=clock.monotonic, sleep=clock.sleep)
+    result = await monitor.wait(sample)
+
+    assert result.text.startswith("<!DOCTYPE html>")
+    assert clock.value == 6
+
+
+@pytest.mark.asyncio
 async def test_first_response_timeout_has_no_partial() -> None:
     clock = FakeClock()
 
