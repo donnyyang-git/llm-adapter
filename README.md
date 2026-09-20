@@ -28,6 +28,43 @@ python -m pip install -e ".[test]"
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
 ```
 
+## 在另一台電腦安裝或更新
+
+### 第一次下載
+
+先安裝 Git、Python 3.11 以上版本與 Google Chrome，然後在要存放專案的資料夾執行：
+
+```powershell
+git clone https://github.com/donnyyang-git/llm-adapter.git
+cd llm-adapter
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[test]"
+```
+
+接著依照「首次使用」啟動服務。每一台電腦都要在自己的專用 Chrome 視窗登入 Gemini；不要複製另一台電腦的 `data/chrome-profile`，其中可能包含登入資訊。
+
+### 取得後續更新
+
+先停止正在執行的服務，再進入專案目錄執行：
+
+```powershell
+git pull origin main
+.\.venv\Scripts\python.exe -m pip install -e ".[test]"
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+若 `git pull` 顯示本機檔案有未提交變更，先使用 `git status` 確認內容。保留變更時應先自行提交，或暫存後再更新：
+
+```powershell
+git stash
+git pull origin main
+git stash pop
+```
+
+若不需要本機程式碼修改，請先手動檢查後移除或還原那些變更；不要直接刪除 `data/`。
+
 ## 首次使用
 
 1. 啟動服務：
@@ -68,6 +105,8 @@ data/conversations/<session-id>.md
 ```
 
 `.json` 保存完整結構與狀態，`.md` 方便閱讀、搜尋或備份。`data/` 已由 Git 排除，包含專用 Chrome 的登入狀態；不要提交、分享或刪除 `data/chrome-profile`，除非你要清除專用 Chrome 的登入狀態。若要備份對話，請只複製 `data/conversations/`。
+
+要將歷史對話帶到另一台電腦時，在兩邊服務都停止的情況下，複製來源電腦的 `data/conversations/` 到目標電腦相同位置。目標電腦啟動後可在 `Saved conversations` 查看它們；若該筆紀錄所屬的 Gemini 分頁不在目前專用 Chrome 中，介面會唯讀顯示，這是避免接續到錯誤對話的保護機制。
 
 ## 可選設定
 
@@ -151,5 +190,12 @@ data/conversations/<session-id>.md
 | 回答停在 `pending` 或 `generating` | 不要直接重送相同問題。先在同一 Gemini 分頁確認回答是否存在，再按 `Recapture response` 擷取現有回答。 |
 | 找不到 Chrome | 安裝 Google Chrome，或設定 `LLM_ADAPTER_CHROME_EXECUTABLE` 指向 `chrome.exe` 的完整路徑。 |
 | 登入狀態異常 | 關閉專用 Chrome，確認沒有其他程式占用 `data/chrome-profile`，再按 `Connect Chrome` 並重新登入。若要完全重設登入狀態，先備份對話資料，再刪除 `data/chrome-profile`。 |
+| `py` 或 `python` 找不到、版本太舊 | 從 Python 官方安裝程式安裝 Python 3.11 以上版本，安裝時啟用加入 PATH 的選項；以 `py --version` 確認。若系統沒有 `py`，改用完整的 `python.exe` 路徑建立虛擬環境。 |
+| `.venv` 壞掉或套件匯入失敗 | 停止服務後刪除 `.venv`，重新執行「安裝」段落的建立與安裝指令。`.venv` 不包含對話資料。 |
+| `git clone` 或 `git pull` 要求登入或遭拒 | 確認已取得 GitHub 倉庫存取權，並依 GitHub 的提示以瀏覽器、Git Credential Manager 或 Personal Access Token 完成驗證。私人倉庫無法匿名下載。 |
+| `git pull` 被本機變更阻擋 | 先執行 `git status` 確認差異；需要保留時先 commit 或 `git stash`，再拉取更新。不要用 Git 指令強制覆寫不確定的檔案。 |
+| 啟動時顯示埠號被占用 | 先關閉舊的 LLM Adapter 程序；或設定未使用的 `LLM_ADAPTER_PORT`。若 Chrome 無法連線，也確認沒有另一個專用 Chrome 或程式占用預設 CDP 埠 `9222`，必要時另設 `LLM_ADAPTER_CDP_PORT`。 |
+| 專用 Chrome 一開就關閉或無法連線 | 確認 `data/chrome-profile` 沒有被其他 Chrome 程序使用，完全關閉該專用 Chrome 後再按 `Connect Chrome`。不要對日常使用的 Chrome 加入這個專案的 CDP 參數。 |
+| 跨電腦看不到舊對話 | Git 不會同步 `data/`。請只複製 `data/conversations/`，不要傳送或同步 `data/chrome-profile`。 |
 
 Gemini 的網頁結構可能變動。若 Gemini 已登入但仍持續找不到輸入框，請保留 `data/conversations/` 的對話檔案與錯誤訊息，以便檢查選擇器相容性。
