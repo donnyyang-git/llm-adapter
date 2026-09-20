@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LLM Adapter</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main id="app">
+      <header class="masthead">
+        <div>
+          <p class="eyebrow">LOCAL GEMINI ARCHIVE</p>
+          <h1>LLM Adapter</h1>
+        </div>
+        <div class="connection" aria-live="polite">
+          <span id="connection-dot" class="status-dot status-dot--muted"></span>
+          <span id="connection-text">Checking Chrome...</span>
+          <button id="start-chrome-button" class="button button--quiet" type="button">Connect Chrome</button>
+        </div>
+      </header>
+
+      <section class="workspace" aria-label="Chat workspace">
+        <aside class="sidebar">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">DESTINATION</p>
+              <h2>Gemini tabs</h2>
+            </div>
+            <button id="refresh-tabs-button" class="button button--quiet" type="button">Refresh</button>
+          </div>
+          <div id="tab-list" class="tab-list" aria-live="polite"></div>
+          <p id="tab-help" class="muted-copy">Connect Chrome, then choose an open Gemini tab.</p>
+          <div class="session-actions">
+            <button id="new-local-session-button" class="button button--secondary" type="button" disabled>New local record</button>
+            <button id="new-gemini-session-button" class="button button--quiet" type="button" disabled>New Gemini chat</button>
+          </div>
+          <div class="archive-heading">
+            <p class="eyebrow">LOCAL ARCHIVE</p>
+            <h2>Saved conversations</h2>
+          </div>
+          <div id="session-list" class="session-list" aria-live="polite"></div>
+        </aside>
+
+        <section class="conversation" aria-label="Conversation">
+          <header class="conversation-header">
+            <div>
+              <p id="session-label" class="eyebrow">NO ACTIVE CONVERSATION</p>
+              <h2 id="conversation-title">Choose a Gemini tab</h2>
+            </div>
+            <button id="recapture-button" class="button button--quiet" type="button" disabled>Recapture response</button>
+          </header>
+
+          <div id="notice" class="notice" hidden role="status"></div>
+          <div id="message-list" class="message-list" aria-live="polite">
+            <div class="empty-state">
+              <p>Select a Gemini tab to start a saved local conversation.</p>
+            </div>
+          </div>
+
+          <form id="message-form" class="composer">
+            <label class="sr-only" for="question-input">Question</label>
+            <textarea id="question-input" rows="3" maxlength="100000" placeholder="Ask Gemini something..." disabled></textarea>
+            <div class="composer-footer">
+              <span id="composer-status" class="muted-copy">Waiting for a Gemini tab.</span>
+              <button id="send-button" class="button button--primary" type="submit" disabled>Send question</button>
+            </div>
+          </form>
+        </section>
+      </section>
+    </main>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

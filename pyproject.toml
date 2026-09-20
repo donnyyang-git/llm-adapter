@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llm-adapter"
+version = "0.1.0"
+description = "Local Gemini conversation archiver controlled through a dedicated Chrome profile"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "markdownify>=1.2,<2",
+    "playwright>=1.55,<2",
+    "pydantic-settings>=2.10,<3",
+    "uvicorn[standard]>=0.35,<1",
+]
+
+[project.optional-dependencies]
+test = [
+    "httpx>=0.28,<1",
+    "pytest>=8.4,<9",
+    "pytest-asyncio>=1.2,<2",
+]
+
+[project.scripts]
+llm-adapter = "llm_adapter.main:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llm_adapter"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
