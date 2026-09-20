@@ -47,7 +47,12 @@ class FakeChromeManager:
         return (await self.list_tabs())[0]
 
     async def start_new_gemini_conversation(self) -> TabInfo:
-        return await self.get_selected_tab()
+        # [修改] 2026-09-20 16:40 原因: 這組假物件要模擬新流程的復原入口。 說明: 允許在尚未選擇 tab 時直接建立新的 Gemini chat，避免 API 測試仍綁死舊行為。
+        self.selected = True
+        return (await self.list_tabs())[0]
+
+    async def rebind_session(self, session_id: str, tab: TabInfo):
+        return tab
 
     async def close(self) -> None:
         return None
@@ -174,6 +179,38 @@ def test_session_history_and_new_gemini_session(tmp_path: Path) -> None:
     assert [session["session_id"] for session in history.json()] == [
         created.json()["session_id"]
     ]
+
+
+def test_new_gemini_session_opens_when_no_tab_was_selected(tmp_path: Path) -> None:
+    async def sender(_: str, __: str) -> None:
+        return None
+
+    manager = cast(ChromeManager, FakeChromeManager())
+    service = ConversationService(ConversationStore(tmp_path), sender)
+    client = TestClient(create_app(manager, service))
+
+    created = client.post("/api/sessions/new-gemini")
+
+    assert created.status_code == 201
+    assert created.json()["tab_id"] == "tab-1"
+
+
+def test_rebind_session_uses_selected_tab(tmp_path: Path) -> None:
+    async def sender(_: str, __: str) -> None:
+        return None
+
+    manager = cast(ChromeManager, FakeChromeManager())
+    service = ConversationService(ConversationStore(tmp_path), sender)
+    client = TestClient(create_app(manager, service))
+    client.post("/api/tabs/select", json={"tab_id": "tab-1"})
+    created = client.post("/api/sessions")
+
+    manager.selected = False
+    client.post("/api/tabs/select", json={"tab_id": "tab-1"})
+    response = client.post(f"/api/sessions/{created.json()['session_id']}/rebind")
+
+    assert response.status_code == 200
+    assert response.json()["tab_id"] == "tab-1"
 
 
 @pytest.mark.asyncio

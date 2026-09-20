@@ -224,14 +224,17 @@ Remove-Item .\data\chrome-profile -Recurse -Force
 
 本專案不會接管日常使用的 Chrome，而是使用 `data/chrome-profile` 的專用設定檔。第一次使用時，請在此專用 Chrome 視窗內登入 Gemini；登入狀態會保留在該設定檔。
 
+如果畫面右上已經顯示 `Chrome connected`，但左側 `New Gemini chat` 或 `Rebind session` 仍提示 Chrome is not connected，通常代表 CDP endpoint 還活著，但 Playwright browser 物件尚未重建。現在系統會在這種情況下先自動重連，再執行開新 Gemini tab 或重綁 session；若仍失敗，請先按 `Refresh`，再按 `Reconnect Chrome` 重新建立連線。
+
 ### Gemini tabs
 
-左側高亮的卡片是目前選定的目標分頁。切換分頁會清除網頁上目前選取的本機 session，避免將下一個問題傳送到錯誤的 Gemini 頁面。
+左側高亮的卡片是目前選定的目標分頁。切換分頁不會自動刪除目前載入的本機 session；如果該 session 屬於另一個 Gemini tab，畫面會進入唯讀狀態，並提示你先選到新的 Gemini tab，再按 `Rebind session` 將舊對話接回來。
 
 ### New local record、New Gemini chat 與 SESSION
 
 - `New local record` 只會建立新的本機 session，並繼續使用目前 Gemini 分頁的對話上下文。適合要分開保存不同工作階段、但仍希望 Gemini 記得前文時使用。
-- `New Gemini chat` 會將目前選取的分頁導向 Gemini 的新聊天頁，再建立新的本機 session。適合要同時切開 Gemini 上下文與本機保存紀錄時使用。
+- `New Gemini chat` 會將目前選取的分頁導向 Gemini 的新聊天頁，再建立新的本機 session。若目前沒有可用的 Gemini 分頁，它會直接在專用 Chrome 裡開啟新的 Gemini 分頁，再建立新的本機 session。適合要同時切開 Gemini 上下文與本機保存紀錄時使用。
+- `Rebind session` 會把目前載入、但已經綁到舊 Gemini tab 的 session，重新接回你目前選取的 Gemini tab。這個按鈕只會在有 session、已選到不同 Gemini tab、且沒有進行中的 turn 時出現。
 
 畫面上的 `SESSION 20260920-...` 是本機保存紀錄的 ID，不是 Gemini 帳號或 Gemini 對話 ID。
 
@@ -248,7 +251,7 @@ data/conversations/<session-id>.md
 
 左側 `Saved conversations` 會列出所有保存在本機的 session，依最後更新時間由新到舊排列。點選項目可重新查看舊對話，不會刪除或覆寫原始紀錄。
 
-若開啟的歷史紀錄不是目前選取 Gemini 分頁所屬，畫面會以唯讀方式呈現，不能直接送出下一題。請先選回原本的 Gemini 分頁，或建立新的本機紀錄，避免把舊紀錄接到錯誤的 Gemini 對話。
+若開啟的歷史紀錄不是目前選取 Gemini 分頁所屬，畫面會以唯讀方式呈現，不能直接送出下一題。請先選回原本的 Gemini 分頁，或切到新的 Gemini 分頁後按 `Rebind session`，避免把舊紀錄接到錯誤的 Gemini 對話。
 
 ### TURN 與回覆狀態
 
@@ -274,6 +277,7 @@ data/conversations/<session-id>.md
 | --- | --- |
 | 網頁無法開啟 | 確認啟動命令仍在執行，並開啟 `http://127.0.0.1:8000`。若出現埠號已被使用，關閉舊服務，或將 `LLM_ADAPTER_PORT` 設為其他埠號後重新啟動。 |
 | 顯示 `Connect Chrome` 或 `Reconnect Chrome` | 按該按鈕建立與專用 Chrome 的連線；重新啟動服務後需要重新連線，但不需要重新登入。 |
+| 右上顯示 `Chrome connected`，但 `New Gemini chat` / `Rebind session` 提示 `Chrome is not connected` | 先按 `Refresh` 讓服務重建 Playwright browser；若仍無法恢復，再按 `Reconnect Chrome` 重新建立連線。 |
 | 清單沒有 Gemini 分頁 | 在專用 Chrome 開啟 `https://gemini.google.com/`，完成登入後回到網站按 `Refresh`。日常 Chrome 的分頁不會出現在清單中。 |
 | 無法送出問題 | 確認已選取 Gemini 分頁、輸入框已可用，且上一輪不是 `pending` 或 `generating`。Gemini 正在產生回答時，系統會禁止送出下一題。 |
 | 回答停在 `pending` 或 `generating` | 不要直接重送相同問題。先在同一 Gemini 分頁確認回答是否存在，再按 `Recapture response` 擷取現有回答。 |

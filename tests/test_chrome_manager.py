@@ -8,6 +8,7 @@ from playwright.async_api import Browser, Error as PlaywrightError
 
 from llm_adapter.chrome_manager import ChromeManager
 from llm_adapter.config import Settings
+from llm_adapter.models import TabInfo
 
 
 class FakePage:
@@ -22,10 +23,20 @@ class FakePage:
     async def title(self) -> str:
         return self._title
 
+    async def goto(self, url: str, wait_until: str = "domcontentloaded") -> None:
+        # [修改] 2026-09-20 16:40 原因: 測試新開 Gemini tab 時需要模擬 Playwright 的導航行為。 說明: 讓假頁面在 goto 後同步更新 URL，方便驗證新 tab 會被導向 Gemini。
+        self.url = url
+
 
 class FakeContext:
     def __init__(self, pages: list[FakePage]) -> None:
         self.pages = pages
+
+    async def new_page(self) -> FakePage:
+        # [修改] 2026-09-20 16:40 原因: ChromeManager 會在沒有可選 tab 時主動建立新頁。 說明: 模擬 Playwright context.new_page() 的回傳值與頁面登錄。
+        page = FakePage("about:blank", "Untitled tab")
+        self.pages.append(page)
+        return page
 
 
 class FakeBrowser:
@@ -232,6 +243,87 @@ async def test_select_tab_rejects_non_gemini_page(
 
     with pytest.raises(ValueError, match="Only Gemini"):
         await manager.select_tab(tab.id)
+
+
+@pytest.mark.asyncio
+async def test_start_new_gemini_conversation_opens_new_tab_when_no_tab_selected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = ChromeManager(Settings())
+    manager._browser = cast(Browser, FakeBrowser([FakePage("https://example.com", "Example")]))
+    monkeypatch.setattr(
+        manager,
+        "_list_cdp_tabs",
+        AsyncMock(
+            side_effect=[
+                [
+                    TabInfo(
+                        id="TARGET-OLD",
+                        title="Example",
+                        url="https://example.com",
+                        is_gemini=False,
+                        is_selected=False,
+                    )
+                ],
+                [
+                    TabInfo(
+                        id="TARGET-NEW",
+                        title="Gemini",
+                        url=ChromeManager.NEW_GEMINI_CONVERSATION_URL,
+                        is_gemini=True,
+                        is_selected=True,
+                    )
+                ],
+            ]
+        ),
+    )
+    monkeypatch.setattr(manager, "_target_id_for_page", AsyncMock(return_value="TARGET-NEW"))
+
+    tab = await manager.start_new_gemini_conversation()
+
+    assert tab.id == "TARGET-NEW"
+    assert tab.is_gemini is True
+    assert manager._selected_tab_id == "TARGET-NEW"
+    assert manager._browser.contexts[0].pages[-1].url == ChromeManager.NEW_GEMINI_CONVERSATION_URL
+
+
+@pytest.mark.asyncio
+async def test_start_new_gemini_conversation_reconnects_browser_when_endpoint_is_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = ChromeManager(Settings())
+    reconnect_browser = FakeBrowser([FakePage("https://example.com", "Example")])
+
+    async def fake_connect() -> bool:
+        manager._browser = cast(Browser, reconnect_browser)
+        return True
+
+    manager._browser = None
+    monkeypatch.setattr(manager, "_connect", fake_connect)
+    monkeypatch.setattr(
+        manager,
+        "_list_cdp_tabs",
+        AsyncMock(
+            side_effect=[
+                [],
+                [
+                    TabInfo(
+                        id="TARGET-NEW",
+                        title="Gemini",
+                        url=ChromeManager.NEW_GEMINI_CONVERSATION_URL,
+                        is_gemini=True,
+                        is_selected=True,
+                    )
+                ],
+            ]
+        ),
+    )
+    monkeypatch.setattr(manager, "_target_id_for_page", AsyncMock(return_value="TARGET-NEW"))
+
+    tab = await manager.start_new_gemini_conversation()
+
+    assert tab.id == "TARGET-NEW"
+    assert manager._browser is reconnect_browser
 
 
 @pytest.mark.parametrize(

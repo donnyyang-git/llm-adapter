@@ -269,7 +269,7 @@ class ChromeManager:
             return self.status
 
     async def list_tabs(self) -> list[TabInfo]:
-        if self._browser is None or not self._browser.is_connected():
+        if not await self._ensure_browser_connected():
             return []
 
         cdp_tabs = await self._list_cdp_tabs()
@@ -361,13 +361,42 @@ class ChromeManager:
         return tab
 
     async def start_new_gemini_conversation(self) -> TabInfo:
-        tab = await self.get_selected_tab()
-        page = await self.get_page(tab.id)
+        try:
+            tab = await self.get_selected_tab()
+        except LookupError:
+            return await self._open_new_gemini_tab()
+
+        try:
+            page = await self.get_page(tab.id)
+        except (KeyError, LookupError):
+            return await self._open_new_gemini_tab()
+
         await page.goto(self.NEW_GEMINI_CONVERSATION_URL, wait_until="domcontentloaded")
         return await self.get_selected_tab()
 
+    async def _open_new_gemini_tab(self) -> TabInfo:
+        if not await self._ensure_browser_connected():
+            raise LookupError("Chrome is not connected.")
+        if not self._browser.contexts:
+            raise LookupError("Chrome has no available browser context.")
+
+        # // [修改] 2026-09-20 16:40 原因: 當 Gemini tab 已關閉而目前又沒有可選分頁時，原本流程會直接失敗。 說明: 改為主動建立新的 Gemini tab 並重新標記選取狀態，讓 New Gemini chat 可用於復原。
+        page = await self._browser.contexts[0].new_page()
+        await page.goto(self.NEW_GEMINI_CONVERSATION_URL, wait_until="domcontentloaded")
+
+        tab_id = await self._target_id_for_page(page)
+        if tab_id is None:
+            raise LookupError("Unable to identify the new Gemini tab.")
+
+        self._selected_tab_id = tab_id
+        tabs = await self.list_tabs()
+        tab = next((candidate for candidate in tabs if candidate.id == tab_id), None)
+        if tab is None:
+            raise LookupError(tab_id)
+        return tab
+
     async def get_page(self, tab_id: str) -> Page:
-        if self._browser is None or not self._browser.is_connected():
+        if not await self._ensure_browser_connected():
             raise LookupError("Chrome is not connected.")
         for context in self._browser.contexts:
             for page in context.pages:
@@ -378,6 +407,13 @@ class ChromeManager:
                 if await self._target_id_for_page(page) == tab_id:
                     return page
         raise KeyError(tab_id)
+
+    async def _ensure_browser_connected(self) -> bool:
+        if self._browser is not None and self._browser.is_connected():
+            return True
+
+        # // [修改] 2026-09-20 17:20 原因: Chrome 狀態可能已經從 CDP endpoint 判定為 connected，但 Playwright browser 還沒重建。 說明: 這裡主動嘗試重新 connect，讓 list_tabs / get_page / new Gemini chat 能從僅有 endpoint 的狀態恢復。
+        return await self._connect()
 
     async def close(self) -> None:
         if self._browser is not None:

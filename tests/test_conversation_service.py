@@ -6,6 +6,7 @@ import pytest
 from llm_adapter.conversation_service import (
     ConversationService,
     QuestionSendError,
+    SessionRebindError,
     TabBusyError,
 )
 from llm_adapter.event_broker import SessionEventBroker
@@ -144,6 +145,55 @@ async def test_failure_preserves_already_captured_response(tmp_path: Path) -> No
     assert failed.turns[-1].status == "failed"
     assert failed.turns[-1].response_text == "Partial"
     assert failed.turns[-1].response_markdown == "**Partial**"
+
+
+@pytest.mark.asyncio
+async def test_rebind_session_updates_tab_id_and_url(tmp_path: Path) -> None:
+    async def sender(_: str, __: str) -> None:
+        return None
+
+    store = ConversationStore(tmp_path)
+    service = ConversationService(store, sender, now=Clock())
+    session = await service.create_session(gemini_tab())
+    rebound = await service.rebind_session(
+        session.session_id,
+        TabInfo(
+            id="TARGET-NEW",
+            title="Gemini conversation",
+            url="https://gemini.google.com/app/new",
+            is_gemini=True,
+            is_selected=True,
+        ),
+    )
+
+    saved = store.load(session.session_id)
+
+    assert rebound.tab_id == "TARGET-NEW"
+    assert rebound.conversation_url == "https://gemini.google.com/app/new"
+    assert saved.tab_id == "TARGET-NEW"
+    assert saved.conversation_url == "https://gemini.google.com/app/new"
+
+
+@pytest.mark.asyncio
+async def test_rebind_session_rejects_active_turn(tmp_path: Path) -> None:
+    async def sender(_: str, __: str) -> None:
+        return None
+
+    service = ConversationService(ConversationStore(tmp_path), sender, now=Clock())
+    session = await service.create_session(gemini_tab())
+    await service.begin_turn(session.session_id, "Question")
+
+    with pytest.raises(SessionRebindError):
+        await service.rebind_session(
+            session.session_id,
+            TabInfo(
+                id="TARGET-NEW",
+                title="Gemini conversation",
+                url="https://gemini.google.com/app/new",
+                is_gemini=True,
+                is_selected=True,
+            ),
+        )
 
 
 @pytest.mark.asyncio

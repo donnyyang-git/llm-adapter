@@ -1,6 +1,6 @@
 const storageKey = "llm-adapter.session-id";
 const activeStatuses = new Set(["pending", "generating"]);
-const state = { session: null, tabs: [], history: [], eventSource: null, reconnectTimer: null, reconnectAttempts: 0 };
+const state = { session: null, tabs: [], history: [], eventSource: null, reconnectTimer: null, reconnectAttempts: 0, chrome: null };
 
 const elements = {
   connectionDot: document.querySelector("#connection-dot"),
@@ -14,6 +14,7 @@ const elements = {
   sessionList: document.querySelector("#session-list"),
   sessionLabel: document.querySelector("#session-label"),
   conversationTitle: document.querySelector("#conversation-title"),
+  rebindButton: document.querySelector("#rebind-button"),
   recaptureButton: document.querySelector("#recapture-button"),
   notice: document.querySelector("#notice"),
   messageList: document.querySelector("#message-list"),
@@ -45,6 +46,10 @@ function canContinueSession() {
   return !state.session || state.session.tab_id === selectedTab()?.id;
 }
 
+function canRebindSession() {
+  return Boolean(state.session && selectedTab() && !canContinueSession() && !isActive());
+}
+
 function showNotice(message, isError = false) {
   elements.notice.textContent = message;
   elements.notice.hidden = !message;
@@ -52,18 +57,31 @@ function showNotice(message, isError = false) {
 }
 
 function setChromeStatus(status) {
+  // [修改] 2026-09-20 16:40 原因: New Gemini chat 需要依賴 Chrome 是否已連線，而不只是目前是否選到 tab。 說明: 將 Chrome 狀態保存到前端 state，讓按鈕啟用條件可同時判斷連線與分頁狀況。
+  state.chrome = status;
   elements.connectionText.textContent = status.message || (status.connected ? "Chrome connected" : "Chrome unavailable");
   elements.connectionDot.className = `status-dot ${status.connected ? "status-dot--connected" : status.state === "error" ? "status-dot--error" : "status-dot--muted"}`;
   elements.startChromeButton.textContent = status.connected ? "Reconnect Chrome" : "Connect Chrome";
+}
+
+function isChromeConnected() {
+  return Boolean(state.chrome?.connected);
 }
 
 function renderTabs() {
   const tabs = state.tabs.filter((tab) => tab.is_gemini);
   elements.tabList.replaceChildren();
   if (!tabs.length) {
-    elements.tabHelp.textContent = "No Gemini tabs are open in the dedicated Chrome profile.";
+    // [修改] 2026-09-20 16:40 原因: 當 Gemini tab 被關掉時，單純顯示空清單不足以引導使用者恢復。 說明: 提示可直接用 New Gemini chat 重新開啟新分頁，縮短復原路徑。
+    elements.tabHelp.textContent = isChromeConnected()
+      ? state.session && !canContinueSession()
+        ? "The Gemini tab for this conversation was closed. Click New Gemini chat to open a replacement tab, then click Rebind session."
+        : "No Gemini tabs are open in the dedicated Chrome profile. Click New Gemini chat to open one."
+      : "Connect Chrome, then choose an open Gemini tab.";
   } else {
-    elements.tabHelp.textContent = "Choose the Gemini tab that should receive this conversation.";
+    elements.tabHelp.textContent = state.session && !canContinueSession()
+      ? "This conversation is attached to a different Gemini tab. Select the target tab, then click Rebind session to continue here."
+      : "Choose the Gemini tab that should receive this conversation.";
   }
   for (const tab of tabs) {
     const button = document.createElement("button");
@@ -135,26 +153,42 @@ function renderSession() {
   const session = state.session;
   const active = isActive();
   elements.messageList.replaceChildren();
+  elements.rebindButton.disabled = !canRebindSession();
   elements.recaptureButton.disabled = !active;
   elements.questionInput.disabled = !selectedTab() || active || !canContinueSession();
   elements.sendButton.disabled = !selectedTab() || active || !canContinueSession();
   elements.newLocalSessionButton.disabled = !selectedTab() || active;
-  elements.newGeminiSessionButton.disabled = !selectedTab() || active;
+  // [修改] 2026-09-20 16:40 原因: 沒有 Gemini tab 時仍要能透過 New Gemini chat 開啟新頁面。 說明: 只有在 Chrome 未連線或目前有進行中的 turn 時才禁用此操作。
+  elements.newGeminiSessionButton.disabled = !isChromeConnected() || active;
 
   if (!session) {
     elements.sessionLabel.textContent = "NO ACTIVE CONVERSATION";
-    elements.conversationTitle.textContent = selectedTab() ? "Ready for a new conversation" : "Choose a Gemini tab";
-    elements.composerStatus.textContent = selectedTab() ? "A new local session is created when you send." : "Waiting for a Gemini tab.";
+    elements.conversationTitle.textContent = selectedTab() ? "Ready for a new conversation" : isChromeConnected() ? "Open a Gemini tab" : "Choose a Gemini tab";
+    elements.composerStatus.textContent = selectedTab()
+      ? "A new local session is created when you send."
+      : isChromeConnected()
+        ? "Click New Gemini chat to open a Gemini tab, or load a saved conversation to rebind it later."
+        : "Waiting for a Gemini tab.";
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.innerHTML = "<p>Select a Gemini tab to start a saved local conversation.</p>";
+    empty.innerHTML = isChromeConnected()
+      ? "<p>Select a Gemini tab or click New Gemini chat to start a saved local conversation.</p>"
+      : "<p>Select a Gemini tab to start a saved local conversation.</p>";
     elements.messageList.append(empty);
     return;
   }
 
   elements.sessionLabel.textContent = `SESSION ${session.session_id}`;
   elements.conversationTitle.textContent = session.title;
-  elements.composerStatus.textContent = active ? "Gemini is responding. A live connection is being maintained." : canContinueSession() ? "Saved locally. Ready for the next question." : "This record belongs to a different Gemini tab and is read-only here.";
+  elements.composerStatus.textContent = active
+    ? "Gemini is responding. A live connection is being maintained."
+    : canContinueSession()
+      ? "Saved locally. Ready for the next question."
+      : selectedTab()
+        ? "This record belongs to a different Gemini tab. Click Rebind session to continue here."
+        : isChromeConnected()
+          ? "The Gemini tab for this record was closed. Open a new Gemini tab, then click Rebind session."
+          : "This record is read-only here.";
   for (const turn of session.turns) {
     const userCopy = turn.question;
     elements.messageList.append(createMessage("You", turn.question, "user", null, turn.turn_id, userCopy));
@@ -274,12 +308,23 @@ async function loadSession(sessionId) {
 }
 
 async function selectTab(tabId) {
+  // [修改] 2026-09-20 17:05 原因: 需要讓舊 session 先保留在畫面上，才能在選到新 Gemini tab 後執行 rebind。 說明: 只更新目前選取的 tab，不主動清除已載入的 session。
   await request("/api/tabs/select", { method: "POST", body: JSON.stringify({ tab_id: tabId }) });
-  disconnectEvents();
-  state.session = null;
-  localStorage.removeItem(storageKey);
   showNotice("");
   await refreshChromeAndTabs();
+}
+
+async function rebindSession() {
+  if (!state.session) return;
+  // [修改] 2026-09-20 17:05 原因: 舊對話要明確接回新 Gemini tab，需先保留 session，再由使用者手動觸發重綁。 說明: 透過專用 API 更新 session.tab_id，避免自動接管造成誤送。
+  try {
+    state.session = await request(`/api/sessions/${encodeURIComponent(state.session.session_id)}/rebind`, { method: "POST" });
+    localStorage.setItem(storageKey, state.session.session_id);
+    showNotice("");
+    await refreshChromeAndTabs();
+  } catch (error) {
+    showNotice(error.message, true);
+  }
 }
 
 function disconnectEvents() {
@@ -361,6 +406,7 @@ elements.newGeminiSessionButton.addEventListener("click", async () => {
     await refreshChromeAndTabs();
   } catch (error) { showNotice(error.message, true); }
 });
+elements.rebindButton.addEventListener("click", () => rebindSession().catch((error) => showNotice(error.message, true)));
 elements.recaptureButton.addEventListener("click", async () => {
   try {
     state.session = await request(`/api/sessions/${encodeURIComponent(state.session.session_id)}/recapture`, { method: "POST" });

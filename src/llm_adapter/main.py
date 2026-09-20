@@ -13,6 +13,7 @@ from llm_adapter.config import settings
 from llm_adapter.conversation_service import (
     ConversationService,
     QuestionSendError,
+    SessionRebindError,
     TabBusyError,
 )
 from llm_adapter.event_broker import SessionEventBroker
@@ -175,6 +176,25 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(error)) from error
         except QuestionSendError as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.post(
+        "/api/sessions/{session_id}/rebind",
+        response_model=ConversationSession,
+        status_code=200,
+    )
+    async def rebind_session(session_id: str) -> ConversationSession:
+        # [修改] 2026-09-20 17:05 原因: 舊對話要明確接回新 Gemini tab，必須經由使用者選定 tab 後再重綁。 說明: API 只接受目前選取的 Gemini tab，避免自動切換造成誤接。
+        try:
+            tab = await manager.get_selected_tab()
+            return await service.rebind_session(session_id, tab)
+        except FileNotFoundError as error:
+            raise HTTPException(status_code=404, detail="Session was not found.") from error
+        except LookupError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except SessionRebindError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 

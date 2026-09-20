@@ -33,13 +33,16 @@
 | 2026-09-20T15:40:00+08:00 | Copy 原文 UX 實作 | 在訊息卡片加入 `Copy` 按鈕，`Gemini` 卡片優先複製 `response_markdown`，`You` 卡片複製原始輸入文字；保留純文字顯示不改動 session 儲存格式。 |
 | 2026-09-20T16:05:00+08:00 | 前端狀態卡死排查 | 實際排查到 `Connect Chrome` 點擊後 UI 停留在 `Checking Chrome...`，但 Chrome 已在 `9222` 監聽；查證顯示 backend 狀態與 start endpoint 實際已連接，問題集中在前端 stale state 與缺失的 `refreshChromeAndTabs` helper。 |
 | 2026-09-20T16:18:00+08:00 | Markdown 時間戳補齊 | 在 `ConversationStore.render_markdown()` 補上 `Sent:` 與 `Completed:`，讓每個 turn 可直接追蹤發送與完成時間，不改變 JSON 儲存格式。 |
+| 2026-09-20T16:40:00+08:00 | Gemini tab 復原入口 | `New Gemini chat` 新增無選取 tab 時的 fallback：若目前沒有可用 Gemini tab，會在專用 Chrome 內直接開啟新的 Gemini 分頁並重新選取；前端同步保留按鈕可用與空狀態引導。 |
+| 2026-09-20T17:05:00+08:00 | session rebind 與空狀態強化 | 新增 `Rebind session`：當舊 session 被切到另一個 Gemini tab 時，可手動把它接回目前選取的 tab；前端空狀態與 composer 文案改成會提示「已關閉 tab / 可重新開啟」。 |
+| 2026-09-20T17:20:00+08:00 | Chrome connected 但 browser 未重建 | 補上 `_ensure_browser_connected()`：當右上顯示 connected 但 Playwright browser 仍是空的時，`list_tabs` / `get_page` / `New Gemini chat` 會先自動重連再執行，避免使用者看到 connected 卻無法開新 tab。 |
 
 ## 目前狀態
 
 - FastAPI 服務目前使用 `127.0.0.1:8000`；Chrome CDP 連線會依序嘗試設定 host、`127.0.0.1`、`localhost`、`[::1]`，兼容 IPv4/IPv6 loopback binding。
 - 專用 Chrome profile 位於 `data/chrome-profile`，已完成啟動、持久化與重連實機驗證，並會在啟動前清理 stale profile lock。
 - 目前服務已連接專用 Chrome；新程序啟動後仍需呼叫 `POST /api/chrome/start` 重新建立 Playwright CDP 連線。
-- 完整測試結果：`51 passed`。另有 2 個來自 Starlette／Python 3.14 的上游棄用警告。
+- 完整測試結果：`58 passed`。另有 2 個來自 Starlette／Python 3.14 的上游棄用警告。
 - VS Code 對 `src/` 與 `tests/` 無診斷錯誤。
 
 ## 已完成
@@ -106,7 +109,9 @@
 
 - 左側顯示 `Saved conversations` 本機歷史清單，可載入舊 session 查看全部 turns。
 - `New local record` 只建立新的本機保存 session，保留目前 Gemini 分頁的上下文。
-- `New Gemini chat` 將目前選取的 Gemini tab 導向 `/app` 新聊天入口後建立本機 session。
+- `New Gemini chat` 將目前選取的 Gemini tab 導向 `/app` 新聊天入口後建立本機 session；若當下沒有可用 Gemini tab，會直接在專用 Chrome 裡開啟新的 Gemini 分頁，再建立本機 session。
+- `Rebind session` 讓已載入但屬於舊 Gemini tab 的 session，能在使用者選到新的 Gemini tab 後明確重新綁定。
+- 若右上顯示 `Chrome connected`，但 `New Gemini chat` / `Rebind session` 暫時提示 `Chrome is not connected`，系統會先嘗試重建 Playwright browser 再繼續；若仍失敗，使用者可按 `Refresh` 或 `Reconnect Chrome`。
 - 歷史 session 的 tab ID 與目前目標 tab 不一致時，輸入區改為唯讀，避免將舊紀錄續寫至錯誤的 Gemini 對話。
 
 ## 實機驗證紀錄
@@ -128,7 +133,7 @@
 - 訊息卡片單則 `Copy` 按鈕已完成，`Gemini` 回覆優先複製 `response_markdown`，`You` 訊息複製原始輸入文字。
 - `Connect Chrome` 卡在 `Checking Chrome...` 的前端狀態已定位並修正：透過實際端點驗證確認 Chrome 已啟動，問題根因為 stale UI 狀態與缺失的 `refreshChromeAndTabs` helper；重新載入前端後可正常刷新狀態。
 - 每個 turn 的 Markdown 輸出已補上 `Sent:` 與 `Completed:` 時間戳，便於分析與交接。
-- 專案測試已驗證：`51 passed`，0 failed；相關 UI 改動未造成回歸。
+- 專案測試已驗證：`58 passed`，0 failed；相關 UI 改動未造成回歸。
 
 ### 待驗證
 

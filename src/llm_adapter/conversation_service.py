@@ -15,6 +15,10 @@ class TabBusyError(RuntimeError):
     pass
 
 
+class SessionRebindError(RuntimeError):
+    pass
+
+
 class QuestionSendError(RuntimeError):
     pass
 
@@ -161,6 +165,20 @@ class ConversationService:
         finally:
             if not keep_lock:
                 lock.release()
+
+    async def rebind_session(self, session_id: str, tab: TabInfo) -> ConversationSession:
+        session = await self.get_session(session_id)
+        if not tab.is_gemini:
+            raise ValueError("A session requires a Gemini tab.")
+        if session.turns and session.turns[-1].status in {"pending", "generating"}:
+            raise SessionRebindError("The session has an active turn and cannot be rebound.")
+
+        # [修改] 2026-09-20 17:05 原因: 舊對話需要能明確接回新的 Gemini tab，但不能默默改寫或影響正在生成中的 turn。 說明: 僅在沒有 active turn 時更新 tab_id / conversation_url，保留 session 內容與歷史。
+        session.tab_id = tab.id
+        session.conversation_url = tab.url
+        session.updated_at = self.now()
+        await self._save(session)
+        return session
 
     async def partial_turn(
         self,
