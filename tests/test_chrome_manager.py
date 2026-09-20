@@ -4,7 +4,7 @@ from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
-from playwright.async_api import Browser
+from playwright.async_api import Browser, Error as PlaywrightError
 
 from llm_adapter.chrome_manager import ChromeManager
 from llm_adapter.config import Settings
@@ -44,6 +44,30 @@ def test_finds_explicit_chrome_executable(tmp_path: Path) -> None:
     assert manager.find_chrome_executable() == executable
 
 
+def test_status_recognizes_live_chrome_listener_without_playwright_browser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = ChromeManager(Settings())
+    manager._state = manager._state.model_copy(update={"state": "starting"})
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"Browser": "Chrome"}'
+
+    monkeypatch.setattr("llm_adapter.chrome_manager.urlopen", lambda *_args, **_kwargs: FakeResponse())
+
+    status = manager.status
+
+    assert status.connected is True
+    assert status.state == "connected"
+
+
 @pytest.mark.asyncio
 async def test_reports_chrome_exit_and_writes_trace_log(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -54,6 +78,7 @@ async def test_reports_chrome_exit_and_writes_trace_log(
         Settings(data_dir=tmp_path / "data", chrome_executable=executable)
     )
     manager._connect = AsyncMock(return_value=False)
+    monkeypatch.setattr("llm_adapter.chrome_manager.urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("not listening")))
 
     class ExitedProcess:
         pid = 1234
@@ -91,6 +116,7 @@ async def test_cdp_timeout_points_to_diagnostic_logs(
         )
     )
     manager._connect = AsyncMock(return_value=False)
+    monkeypatch.setattr("llm_adapter.chrome_manager.urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("not listening")))
 
     class RunningProcess:
         pid = 1234
@@ -109,6 +135,69 @@ async def test_cdp_timeout_points_to_diagnostic_logs(
     assert '"event": "cdp_endpoint_timeout"' in (
         tmp_path / "data" / "logs" / "chrome-manager.jsonl"
     ).read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_connects_with_ipv4_then_ipv6_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = ChromeManager(Settings())
+    calls: list[str] = []
+
+    class FakePlaywright:
+        class Chromium:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            async def connect_over_cdp(self, endpoint: str):
+                calls.append(endpoint)
+                if endpoint == "http://127.0.0.1:9222":
+                    raise PlaywrightError("ipv4 fail")
+                return object()
+
+        chromium = Chromium()
+
+    class FakeStarter:
+        def __init__(self) -> None:
+            self._playwright = FakePlaywright()
+
+        async def start(self):
+            return self._playwright
+
+    monkeypatch.setattr("llm_adapter.chrome_manager.async_playwright", lambda: FakeStarter())
+
+    connected = await manager._connect()
+
+    assert connected is True
+    assert calls == ["http://127.0.0.1:9222", "http://[::1]:9222"]
+    assert manager.endpoint == "http://[::1]:9222"
+
+
+@pytest.mark.asyncio
+async def test_clears_stale_profile_lock_before_launch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    executable = tmp_path / "chrome.exe"
+    executable.touch()
+    profile_dir = tmp_path / "data" / "chrome-profile"
+    profile_dir.mkdir(parents=True)
+    stale_lock = profile_dir / "lockfile"
+    stale_lock.write_text("stale", encoding="utf-8")
+
+    manager = ChromeManager(Settings(data_dir=tmp_path / "data", chrome_executable=executable))
+    manager._connect = AsyncMock(return_value=False)
+    monkeypatch.setattr("llm_adapter.chrome_manager.urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("not listening")))
+
+    class RunningProcess:
+        pid = 9876
+        returncode = None
+
+    monkeypatch.setattr(
+        "llm_adapter.chrome_manager.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=RunningProcess()),
+    )
+
+    await manager.start()
+
+    assert not stale_lock.exists()
 
 
 @pytest.mark.asyncio

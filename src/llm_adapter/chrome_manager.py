@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ class ChromeManager:
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._process: asyncio.subprocess.Process | None = None
+        self._connected_endpoint: str | None = None
         self._state: ChromeStatus = ChromeStatus(
             state="stopped",
             connected=False,
@@ -47,13 +49,69 @@ class ChromeManager:
 
     @property
     def status(self) -> ChromeStatus:
+        # // [修改] 2026-09-20 15:35 原因: Windows 下 Chrome 可能已在 loopback 上開啟 CDP，但程式內部 _browser 尚未初始化，導致狀態 API 誤判為 stopped。 說明: 只在 App 已進入啟動/連線流程時才做 live endpoint fallback，避免 fresh app 被其他電腦 Chrome 誤判為已連線。
         if self._browser is not None and self._browser.is_connected():
-            return ChromeStatus(state="connected", connected=True)
+            self._state = ChromeStatus(state="connected", connected=True)
+            return self._state
+
+        if self._connected_endpoint is not None:
+            try:
+                with urlopen(f"{self._connected_endpoint}/json/version", timeout=1):
+                    self._state = ChromeStatus(state="connected", connected=True)
+                    return self._state
+            except OSError:
+                self._connected_endpoint = None
+
+        if self._process is None and self._state.state == "stopped":
+            return self._state
+
+        for endpoint in self._candidate_endpoints:
+            try:
+                with urlopen(f"{endpoint}/json/version", timeout=1) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                    if isinstance(payload, dict) and ("Browser" in payload or "webSocketDebuggerUrl" in payload):
+                        self._connected_endpoint = endpoint
+                        self._state = ChromeStatus(state="connected", connected=True)
+                        return self._state
+            except (OSError, ValueError, UnicodeDecodeError):
+                continue
+
         return self._state
 
     @property
     def endpoint(self) -> str:
-        return f"http://{self.settings.cdp_host}:{self.settings.cdp_port}"
+        if self._connected_endpoint is not None:
+            return self._connected_endpoint
+        host = self.settings.cdp_host or "127.0.0.1"
+        return f"http://{host}:{self.settings.cdp_port}"
+
+    @property
+    def _candidate_endpoints(self) -> list[str]:
+        # // [修改] 2026-09-20 15:10 原因: Chrome 在 Windows 上可能在 IPv4/IPv6 loopback 雙棧中綁定 9222，程式只用單一設定會誤判失敗。 說明: 依序嘗試設定值、IPv4 loopback、IPv6 loopback，讓 CDP 連線能自動 fallback。
+        configured_host = (self.settings.cdp_host or "127.0.0.1").strip()
+        hosts: list[str] = []
+        seen: set[str] = set()
+
+        def add_host(host: str) -> None:
+            if not host:
+                return
+            normalized = host.strip().lower()
+            if normalized in {"[::1]", "::1"}:
+                host = "[::1]"
+            elif normalized == "localhost":
+                host = "localhost"
+            key = host.lower()
+            if key in seen:
+                return
+            seen.add(key)
+            hosts.append(host)
+
+        add_host(configured_host)
+        add_host("127.0.0.1")
+        add_host("[::1]")
+        add_host("::1")
+
+        return [f"http://{host}:{self.settings.cdp_port}" for host in hosts]
 
     @staticmethod
     def is_gemini_url(url: str) -> bool:
@@ -75,6 +133,49 @@ class ChromeManager:
             if candidate.is_file():
                 return candidate
         return None
+
+    def _profile_is_in_use(self) -> bool:
+        # // [修改] 2026-09-20 14:15 原因: 需要在啟動前檢查專用 profile 是否已被另一個 Chrome 進程持有，避免重啟時直接因為鎖定退出。 說明: 以 Windows Chrome command line 檢查 --user-data-dir 是否指向同一個 profile，若已被佔用則直接返回錯誤，不清除鎖定檔。
+        if not self.settings.chrome_profile_dir.exists():
+            return False
+
+        profile_dir = str(self.settings.chrome_profile_dir.resolve()).lower()
+        try:
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'chrome' -or $_.Name -match 'msedge' } | Select-Object -ExpandProperty CommandLine) | Out-String -Width 4096",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
+        for line in result.stdout.splitlines():
+            normalized = line.lower()
+            if "--user-data-dir=" in normalized and profile_dir in normalized:
+                return True
+        return False
+
+    def _clear_stale_profile_locks(self) -> None:
+        # // [修改] 2026-09-20 14:00 原因: Chrome 專用 profile 會保留 lockfile；上一輪崩潰時會卡住新啟動並導致退出。 說明: 啟動前清理 profile 中的舊鎖定檔，避免專用 Chrome 因重用殘留鎖定而直接退出。
+        if not self.settings.chrome_profile_dir.exists():
+            return
+        for lock_path in (
+            self.settings.chrome_profile_dir / "lockfile",
+            self.settings.chrome_profile_dir / "SingletonLock",
+            self.settings.chrome_profile_dir / "SingletonSocket",
+        ):
+            if lock_path.exists():
+                try:
+                    lock_path.unlink()
+                except OSError:
+                    pass
 
     async def start(self) -> ChromeStatus:
         async with self._start_lock:
@@ -99,6 +200,20 @@ class ChromeManager:
 
             self.settings.chrome_profile_dir.mkdir(parents=True, exist_ok=True)
             self._logs_dir.mkdir(parents=True, exist_ok=True)
+            if self._profile_is_in_use():
+                self._write_trace(
+                    "chrome_profile_in_use",
+                    profile_dir=str(self.settings.chrome_profile_dir),
+                )
+                self._state = ChromeStatus(
+                    state="error",
+                    connected=False,
+                    message=(
+                        "Chrome is already using this profile. Please close the existing Chrome window for this project and try again."
+                    ),
+                )
+                return self.status
+            self._clear_stale_profile_locks()
             command = (
                 str(executable),
                 f"--remote-debugging-address={self.settings.cdp_host}",
@@ -271,19 +386,29 @@ class ChromeManager:
         if self._playwright is not None:
             await self._playwright.stop()
             self._playwright = None
+        self._connected_endpoint = None
         self._state = ChromeStatus(state="stopped", connected=False)
 
     async def _connect(self) -> bool:
         if self._playwright is None:
             self._playwright = await async_playwright().start()
-        try:
-            self._browser = await self._playwright.chromium.connect_over_cdp(self.endpoint)
-        except PlaywrightError as error:
-            self._write_trace("cdp_connect_failed", endpoint=self.endpoint, error=str(error))
-            return False
-        self._write_trace("cdp_connected", endpoint=self.endpoint)
-        self._state = ChromeStatus(state="connected", connected=True)
-        return True
+
+        last_error: Exception | None = None
+        for endpoint in self._candidate_endpoints:
+            try:
+                self._browser = await self._playwright.chromium.connect_over_cdp(endpoint)
+            except Exception as error:
+                last_error = error
+                self._write_trace("cdp_connect_failed", endpoint=endpoint, error=str(error))
+                continue
+            self._connected_endpoint = endpoint
+            self._write_trace("cdp_connected", endpoint=endpoint)
+            self._state = ChromeStatus(state="connected", connected=True)
+            return True
+
+        if last_error is not None:
+            self._write_trace("cdp_connect_failed", endpoint=self.endpoint, error=str(last_error))
+        return False
 
     def _set_process_exit_error(self, returncode: int) -> None:
         self._write_trace("chrome_exited", returncode=returncode)

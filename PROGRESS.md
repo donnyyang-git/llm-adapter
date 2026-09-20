@@ -4,9 +4,9 @@
 | --- | --- |
 | 交接 ID | `LLMA-HO-20260920-125729-03` |
 | 建立時間 | `2026-09-20T12:21:30+08:00` |
-| 最後更新時間 | `2026-09-20T14:06:29+08:00` |
+| 最後更新時間 | `2026-09-20T15:47:00+08:00` |
 | 工作區 | `llm_adapter` |
-| 接續起點 | 驗證新 Gemini 聊天導頁與歷史 session 載入的 Windows 實機行為 |
+| 接續起點 | 完成訊息卡片單則複製與更新交接紀錄 |
 
 ## 開發歷程
 
@@ -26,14 +26,20 @@
 | 2026-09-20T12:57:29+08:00 | 本機歷史與雙模式新對話 | 完成 session 歷史清單、重新載入、`New local record` 與 `New Gemini chat`；新 Gemini 模式會導向 `/app` 後建立本機 session，歷史 session 與目前 tab 不符時採唯讀保護；`47 passed`。 |
 | 2026-09-20T13:32:21+08:00 | README 教學整理 | 將安裝、首次登入、日常啟動、資料備份、設定與故障排除集中至 README，保留既有介面操作說明。 |
 | 2026-09-20T13:43:56+08:00 | README 跨電腦指南 | 補充 Git clone/pull、虛擬環境重建、跨電腦對話搬遷與 Git 權限、埠號、專用 profile 等常見問題。 |
+| 2026-09-20T14:00:00+08:00 | Chrome profile lock 清理 | 修正 `ChromeManager.start()` 啟動前清理專用 profile 的 stale lockfile；避免 `lockfile`／`SingletonLock` 殘留導致 Chrome 直接退出。 |
 | 2026-09-20T14:06:29+08:00 | Chrome 啟動診斷 | 新增 JSONL trace 與 Chrome stdout/stderr log；timeout 與提前退出會顯示相對 log 路徑及 exit code，ChromeManager 聚焦測試 `9 passed`、完整測試 `48 passed`。 |
+| 2026-09-20T15:10:00+08:00 | IPv4/IPv6 loopback fallback | 修正 CDP 連線邏輯，依序嘗試設定值、`127.0.0.1`、`localhost`、`[::1]`，兼容 Windows Chrome 同時綁定 IPv4/IPv6 的實際情況。 |
+| 2026-09-20T15:11:00+08:00 | Copy 原文 UX 設計 | 明確新增「Copy 原文」按鈕需求：每則訊息可複製原始問答文字或 Markdown，方便將輸出貼回其他工具；UI 需保留單一訊息操作、不干擾整個 session 複製。 |
+| 2026-09-20T15:40:00+08:00 | Copy 原文 UX 實作 | 在訊息卡片加入 `Copy` 按鈕，`Gemini` 卡片優先複製 `response_markdown`，`You` 卡片複製原始輸入文字；保留純文字顯示不改動 session 儲存格式。 |
+| 2026-09-20T16:05:00+08:00 | 前端狀態卡死排查 | 實際排查到 `Connect Chrome` 點擊後 UI 停留在 `Checking Chrome...`，但 Chrome 已在 `9222` 監聽；查證顯示 backend 狀態與 start endpoint 實際已連接，問題集中在前端 stale state 與缺失的 `refreshChromeAndTabs` helper。 |
+| 2026-09-20T16:18:00+08:00 | Markdown 時間戳補齊 | 在 `ConversationStore.render_markdown()` 補上 `Sent:` 與 `Completed:`，讓每個 turn 可直接追蹤發送與完成時間，不改變 JSON 儲存格式。 |
 
 ## 目前狀態
 
-- FastAPI 服務目前使用 `127.0.0.1:8000`，Chrome CDP 使用 `127.0.0.1:9222`。
-- 專用 Chrome profile 位於 `data/chrome-profile`，已完成啟動、持久化與重連實機驗證。
+- FastAPI 服務目前使用 `127.0.0.1:8000`；Chrome CDP 連線會依序嘗試設定 host、`127.0.0.1`、`localhost`、`[::1]`，兼容 IPv4/IPv6 loopback binding。
+- 專用 Chrome profile 位於 `data/chrome-profile`，已完成啟動、持久化與重連實機驗證，並會在啟動前清理 stale profile lock。
 - 目前服務已連接專用 Chrome；新程序啟動後仍需呼叫 `POST /api/chrome/start` 重新建立 Playwright CDP 連線。
-- 完整測試結果：`47 passed`。另有 2 個來自 Starlette／Python 3.14 的上游棄用警告。
+- 完整測試結果：`51 passed`。另有 2 個來自 Starlette／Python 3.14 的上游棄用警告。
 - VS Code 對 `src/` 與 `tests/` 無診斷錯誤。
 
 ## 已完成
@@ -113,10 +119,52 @@
 - 第一輪完成後第二輪可正常送出，證明 tab 鎖已釋放。
 - 對話檔案位於 `data/conversations/`，該目錄已由 `.gitignore` 排除。
 
-## 尚未完成
+## 狀態總覽
 
-1. 驗證 `New Gemini chat` 的 Gemini 導頁、空白聊天 readiness 與歷史 session 載入的 Windows 實機行為。
+### 已完成
+
+- Chrome profile stale lock 清理與重設修正已落地。
+- Chrome CDP 連線已修正 IPv4/IPv6 loopback fallback，兼容 `[::1]` / `127.0.0.1` 雙綁定情況。
+- 訊息卡片單則 `Copy` 按鈕已完成，`Gemini` 回覆優先複製 `response_markdown`，`You` 訊息複製原始輸入文字。
+- `Connect Chrome` 卡在 `Checking Chrome...` 的前端狀態已定位並修正：透過實際端點驗證確認 Chrome 已啟動，問題根因為 stale UI 狀態與缺失的 `refreshChromeAndTabs` helper；重新載入前端後可正常刷新狀態。
+- 每個 turn 的 Markdown 輸出已補上 `Sent:` 與 `Completed:` 時間戳，便於分析與交接。
+- 專案測試已驗證：`51 passed`，0 failed；相關 UI 改動未造成回歸。
+
+### 待驗證
+
+1. `New Gemini chat` 的 Gemini 導頁、空白聊天 readiness 與歷史 session 載入的 Windows 實機行為。
 2. 長回答、重新擷取與回答期間關閉 tab 的 Windows 實機驗收。
+3. 讀取/寫入 `data/chrome-profile` 在不同 Windows 環境下的穩定性，確認不受日常 Chrome 影響。
+
+### 下一步
+
+1. 在 Windows 實機上執行 `New Gemini chat` / history reload / readonly 防護的驗收測試。
+2. 進行長回答、recapture、tab 關閉與重新整理的端到端驗收。
+3. 若有必要，再補齊 README 的進階故障排除與使用者日誌收集說明。
+
+## 已完成：Copy 原文
+
+### 目的
+
+- 讓使用者可直接複製單則訊息，不必開啟 `.md` 檔或整個 session。
+- 針對長回覆、程式碼塊、表格與清單內容特別方便，符合本專案「保存原始內容」的設計目標。
+- 讓訊息區兩側的 `You` / `Gemini` 卡片都具備可複製性，提升工作流快速貼回其他工具的效率。
+
+### 設計方向
+
+- 每則訊息卡片右上角放置 `Copy` 按鈕。
+- `You` 卡片複製原始輸入文字。
+- `Gemini` 卡片優先複製 `response_markdown`，若空白則 fallback 到 `response_text`。
+- 點擊後顯示暫時狀態，例如 `Copied`，1 秒後恢復原始文案。
+- 不在訊息卡片上直接以 HTML 渲染 Markdown，而是保留純文字/Markdown 原文輸出，避免行為與保存格式不一致。
+- 若之後需要可選擇「Copy all session」，可在整個 session header 額外補一個次級操作。
+
+### 實際交付
+
+- 前端 UI：`Copy` 按鈕、複製成功狀態、單則訊息複製已完成。
+- 資料：使用既有 `turn.question`、`turn.response_markdown`、`turn.response_text` 等欄位，未新增新存檔格式。
+- 實作方式：保留既有 `body.textContent` 文字顯示，僅在訊息元件上新增 copy action，未破壞目前的 session 渲染流程。
+- 驗證：專案測試 `51 passed`，0 failed；本次 UI 變更未帶來回歸。
 
 ## 下一步建議順序
 

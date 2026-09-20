@@ -70,6 +70,10 @@ h2 { font-size: 19px; line-height: 1.2; }
 .message--user { align-self: flex-end; border-color: var(--aqua); background: #e6f1ed; }
 .message--model { align-self: flex-start; }
 .message-meta { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: var(--aqua); font-family: "Courier New", monospace; font-size: 11px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase; }
+.message-copy { padding: 4px 8px; border: 1px solid var(--aqua); border-radius: 999px; background: transparent; color: var(--aqua); font-family: "Courier New", monospace; font-size: 10px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase; }
+.message-copy:hover { background: rgb(0 110 104 / 8%); }
+.message-copy { padding: 4px 8px; border: 1px solid var(--aqua); border-radius: 999px; background: transparent; color: var(--aqua); font-family: "Courier New", monospace; font-size: 10px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase; }
+.message-copy:hover { background: rgb(0 110 104 / 8%); }
 .message-body { white-space: pre-wrap; font-size: 15px; line-height: 1.55; }
 .message-error { margin-top: 12px; color: var(--danger); font-size: 13px; }
 .empty-state { display: grid; place-items: center; flex: 1; min-height: 220px; color: var(--muted); text-align: center; }

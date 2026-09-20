@@ -110,6 +110,27 @@ function renderHistory() {
   }
 }
 
+function copyTextToClipboard(text) {
+  // // [修改] 2026-09-20 15:40 原因: 使用者需要直接複製單則訊息內容，特別是長回覆與 Markdown 原文。 說明: 透過 navigator.clipboard 先複製，若不可用則退回 textarea fallback，保持相容。
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+
+  const helper = document.createElement("textarea");
+  helper.value = text;
+  helper.setAttribute("readonly", "");
+  helper.style.position = "fixed";
+  helper.style.opacity = "0";
+  document.body.append(helper);
+  helper.select();
+  const didCopy = document.execCommand("copy");
+  helper.remove();
+  if (!didCopy) {
+    return Promise.reject(new Error("Clipboard copy failed."));
+  }
+  return Promise.resolve();
+}
+
 function renderSession() {
   const session = state.session;
   const active = isActive();
@@ -135,66 +156,112 @@ function renderSession() {
   elements.conversationTitle.textContent = session.title;
   elements.composerStatus.textContent = active ? "Gemini is responding. A live connection is being maintained." : canContinueSession() ? "Saved locally. Ready for the next question." : "This record belongs to a different Gemini tab and is read-only here.";
   for (const turn of session.turns) {
-    elements.messageList.append(createMessage("You", turn.question, "user", null, turn.turn_id));
-    const text = turn.response_text || (activeStatuses.has(turn.status) ? "Waiting for Gemini response..." : "No response was captured.");
-    elements.messageList.append(createMessage("Gemini", text, "model", turn.error, turn.status));
+    const userCopy = turn.question;
+    elements.messageList.append(createMessage("You", turn.question, "user", null, turn.turn_id, userCopy));
+    const responseText = turn.response_text || (activeStatuses.has(turn.status) ? "Waiting for Gemini response..." : "No response was captured.");
+    const modelCopy = turn.response_markdown || responseText;
+    elements.messageList.append(createMessage("Gemini", responseText, "model", turn.error, turn.status, modelCopy));
   }
   elements.messageList.scrollTop = elements.messageList.scrollHeight;
 }
 
-function createMessage(author, text, kind, error, stateLabel) {
+function createMessage(author, text, kind, error, stateLabel, copyText) {
   const article = document.createElement("article");
   article.className = `message message--${kind}`;
+
   const meta = document.createElement("div");
   meta.className = "message-meta";
+
   const name = document.createElement("span");
   name.textContent = author;
+
   const status = document.createElement("span");
   status.textContent = stateLabel;
-  meta.append(name, status);
+
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "message-copy";
+  copyButton.textContent = "Copy";
+  copyButton.title = "Copy original text";
+  copyButton.addEventListener("click", async () => {
+    try {
+      await copyTextToClipboard(copyText || text);
+      const originalText = copyButton.textContent;
+      copyButton.textContent = "Copied";
+      setTimeout(() => {
+        copyButton.textContent = originalText;
+      }, 1000);
+    } catch (error) {
+      copyButton.textContent = "Failed";
+      setTimeout(() => {
+        copyButton.textContent = "Copy";
+      }, 1000);
+    }
+  });
+
+  meta.append(name, status, copyButton);
+
   const body = document.createElement("div");
   body.className = "message-body";
   body.textContent = text;
+
   article.append(meta, body);
+
   if (error) {
     const errorNode = document.createElement("p");
     errorNode.className = "message-error";
     errorNode.textContent = error;
     article.append(errorNode);
   }
+
   return article;
 }
 
-async function refreshChromeAndTabs() {
-  const [status, tabs, history] = await Promise.all([request("/api/chrome/status"), request("/api/tabs"), request("/api/sessions")]);
-  state.tabs = tabs;
-  state.history = history;
-  setChromeStatus(status);
-  renderTabs();
-  renderHistory();
-  renderSession();
-}
-
+// [修改] 2026-09-20 15:50 原因: 前端缺少 Chrome 狀態與 session 載入的 helper，導致點擊 Connect Chrome 會在 refreshChromeAndTabs 時噴錯。 說明: 補回狀態刷新、儲存 session 載入、建立新會話等函式，讓 UI 正常往後執行。
 async function loadStoredSession() {
-  const sessionId = localStorage.getItem(storageKey);
-  if (!sessionId) return;
+  const storedSessionId = localStorage.getItem(storageKey);
+  if (!storedSessionId) {
+    state.session = null;
+    return;
+  }
+
   try {
-    state.session = await request(`/api/sessions/${encodeURIComponent(sessionId)}`);
-    if (isActive()) connectEvents();
+    state.session = await request(`/api/sessions/${encodeURIComponent(storedSessionId)}`);
+    state.history = await request("/api/sessions");
   } catch (error) {
     localStorage.removeItem(storageKey);
-    showNotice("The previously open session is no longer available.", true);
+    state.session = null;
+    state.history = [];
+    showNotice(error.message, true);
   }
 }
 
 async function createSession(path = "/api/sessions") {
   const session = await request(path, { method: "POST" });
   state.session = session;
-  state.history = [session, ...state.history.filter((item) => item.session_id !== session.session_id)];
   localStorage.setItem(storageKey, session.session_id);
+  state.history = await request("/api/sessions");
   renderHistory();
   renderSession();
+  connectEvents();
   return session;
+}
+
+async function refreshChromeAndTabs() {
+  const status = await request("/api/chrome/status");
+  setChromeStatus(status);
+  state.tabs = await request("/api/tabs");
+  state.history = await request("/api/sessions");
+  renderTabs();
+  renderHistory();
+
+  const activeSessionId = state.session?.session_id;
+  if (activeSessionId && !state.history.some((session) => session.session_id === activeSessionId)) {
+    state.session = null;
+    localStorage.removeItem(storageKey);
+  }
+
+  renderSession();
 }
 
 async function loadSession(sessionId) {

@@ -58,6 +58,9 @@ class ConversationStore:
                     "",
                     turn.response_markdown or turn.response_text,
                     "",
+                    f"Sent: {turn.sent_at.isoformat()}",
+                    f"Completed: {turn.completed_at.isoformat() if turn.completed_at else 'N/A'}",
+                    "",
                     f"Status: `{turn.status}`",
                 ]
             )

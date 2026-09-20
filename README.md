@@ -139,7 +139,74 @@ Get-Content data\logs\chrome-stderr.log -Tail 200
 Test-NetConnection 127.0.0.1 -Port 9222
 ```
 
-若 trace 顯示 `chrome_exited`，請查看其中的 `returncode` 和 Chrome log；若持續是 `cdp_connect_failed` 或 `cdp_endpoint_timeout`，確認預設 CDP 埠 `9222` 未被其他程式占用。這些 log 可能含有本機路徑或 Chrome 的診斷資訊，分享前請先檢查內容。
+若 trace 顯示 `chrome_exited`，請查看其中的 `returncode` 和 Chrome log；若持續是 `cdp_connect_failed` 或 `cdp_endpoint_timeout`，先確認預設 CDP 埠 `9222` 未被其他程式占用，再檢查是否為 IPv4/IPv6 loopback 解析差異。實際上，Windows Chrome 可能同時在 `127.0.0.1` 與 `[::1]` 啟用 DevTools，程式現在會依序嘗試設定值、`127.0.0.1`、`localhost`、`[::1]`，避免因為只連 IPv4 而誤判為未啟動。這些 log 可能含有本機路徑或 Chrome 的診斷資訊，分享前請先檢查內容。
+
+## 專用 Chrome profile 鎖定與重設教學
+
+當 Chrome 一開就關，或畫面顯示 `Chrome exited before its local debugging endpoint responded`，通常代表專用 profile 已被鎖住。Chrome 會在 `data/chrome-profile` 內寫入 `lockfile`、`SingletonLock` 或 `SingletonSocket`，用來避免同一個 profile 被兩個 Chrome 程序同時使用；若上一個 Chrome 因為異常退出、視窗被強制關閉，或另一個程序仍在持有 profile，新的 Chrome 啟動會直接失敗。
+
+### 自動保護機制
+
+本專案已在啟動前加入保護：
+
+- 先檢查 `data/chrome-profile` 是否已被其他 Chrome / Edge 程序使用。
+- 若發現舊的 profile 鎖定檔殘留，會先移除 `lockfile` 等 stale lock。
+- 若確認其他程序仍持有這個 profile，會直接回報明確錯誤，避免繼續啟動造成更多干擾。
+- 若 Chrome 只在某一個 loopback 介面啟動 DevTools，會自動重試 `127.0.0.1`、`localhost`、`[::1]`，不再假設單一地址一定可用。
+
+這樣可以在大多數情況下自動修復因前次崩潰造成的 profile 鎖定問題，以及雙 loopback 介面造成的連線誤判。
+
+### 手動重設步驟（最穩定）
+
+當自動保護仍無法解決時，請依序操作：
+
+1. 關閉所有 Chrome、Chrome Beta、Google Chrome 以及 Edge 視窗。
+2. 確認沒有任何自動啟動的 Chrome 進程在背景執行。
+3. 在專案根目錄中刪除下列檔案：
+
+```powershell
+Remove-Item .\data\chrome-profile\lockfile -ErrorAction SilentlyContinue
+Remove-Item .\data\chrome-profile\SingletonLock -ErrorAction SilentlyContinue
+Remove-Item .\data\chrome-profile\SingletonSocket -ErrorAction SilentlyContinue
+```
+
+4. 若仍無法啟動，表示 profile 可能已經損壞，這時可重設整個專用 profile 目錄：
+
+```powershell
+Remove-Item .\data\chrome-profile -Recurse -Force
+```
+
+> 注意：重設整個 profile 會清除 Gemini 登入狀態與 Chrome 的本機設定，請先確認是否需要保留登入資訊。若只是鎖定問題，一般先刪除 `lockfile`/`Singleton*` 就足夠。
+
+5. 重新啟動服務，然後按 `Connect Chrome`。
+
+### 常見判斷
+
+- 若 `chrome-manager.jsonl` 顯示 `chrome_exited`，優先檢查 profile 鎖定。
+- 若 `chrome-stderr.log` 中有 `profile`、`lock`、`Singleton`、`unable to create` 類訊息，通常就是 profile 問題。
+- 若既沒有 profile 鎖定、也沒有其他 Chrome 程序持有該 profile，才需要再檢查 `9222` 埠是否被占用。
+- 若 Chrome log 顯示 `DevTools listening on ws://[::1]:9222` 或 `127.0.0.1` 只在其中一個 loopback 被綁定，代表是 IPv4/IPv6 連線差異，不是 Chrome 沒啟動。
+
+### 近期實際修正：Connect Chrome 卡在 `Checking Chrome...`
+
+在一次實機檢查中，Chrome 服務已經在 `9222` 監聽，且直接呼叫 `POST /api/chrome/start` 之後會返回 `connected=true`，但前端仍停留在 `Checking Chrome...`。這種情況通常不是 Chrome 沒啟動，而是兩層問題同時存在：
+
+- 後端狀態曾因 stale state 而回報為 `stopped`，讓 UI 以為尚未連線。
+- 前端 JavaScript 中存在已失效的 `refreshChromeAndTabs` 呼叫，造成按鈕點擊後直接中斷，錨點訊息無法更新。
+
+修正方式是：
+
+1. 確認 Chrome 實際 CDP 端點確實可連線；
+2. 修正前端當前的 helper / 事件流程，讓 `Connect Chrome` 能正常觸發重新整理；
+3. 在瀏覽器重新整理或清除舊快取後，重新讀取新的 `app.js`，避免舊腳本仍在執行。
+
+這個案例提醒維護時要分開檢查：
+
+- Chrome 自身是否已啟動並在 CDP 埠監聽；
+- App backend 是否已同步更新狀態；
+- 前端是否仍載入舊腳本、導致事件綁定失敗。
+
+另外，對話匯出的 Markdown 也已補上 per-turn 時間資訊：每一輪都會顯示 `Sent:` 與 `Completed:`，便於追蹤各回合的開始與結束時間。
 
 ## 介面導覽與操作流程
 
@@ -147,8 +214,9 @@ Test-NetConnection 127.0.0.1 -Port 9222
 
 1. 確認右上角顯示綠點與 `Chrome connected`。這代表服務已連上由本專案管理的專用 Chrome 視窗，可以操作其中的 Gemini 分頁。
 2. 在左側 `Gemini tabs` 選取要接收提問的 Gemini 分頁。卡片中的標題與網址可用來確認目標；按 `Refresh` 可重新掃描專用 Chrome 目前開啟的 Gemini 分頁。
-3. 依需求選擇 `New local record` 或 `New Gemini chat`；也可直接在下方輸入問題並按 `Send question`，系統會建立本機對話紀錄。
-4. 等待 Gemini 產生回覆。產生期間請不要再送出下一題；完成後才可繼續輸入下一題。
+3. 每則訊息卡片右上角都有 `Copy` 按鈕，可複製單則 `You` 訊息或 `Gemini` 回覆；`Gemini` 卡片會優先複製 Markdown 原文，必要時再退回純文字內容。
+4. 依需求選擇 `New local record` 或 `New Gemini chat`；也可直接在下方輸入問題並按 `Send question`，系統會建立本機對話紀錄。
+5. 等待 Gemini 產生回覆。產生期間請不要再送出下一題；完成後才可繼續輸入下一題。
 
 ### Chrome connected / Reconnect Chrome
 
@@ -216,8 +284,9 @@ data/conversations/<session-id>.md
 | `git clone` 或 `git pull` 要求登入或遭拒 | 確認已取得 GitHub 倉庫存取權，並依 GitHub 的提示以瀏覽器、Git Credential Manager 或 Personal Access Token 完成驗證。私人倉庫無法匿名下載。 |
 | `git pull` 被本機變更阻擋 | 先執行 `git status` 確認差異；需要保留時先 commit 或 `git stash`，再拉取更新。不要用 Git 指令強制覆寫不確定的檔案。 |
 | 啟動時顯示埠號被占用 | 先關閉舊的 LLM Adapter 程序；或設定未使用的 `LLM_ADAPTER_PORT`。若 Chrome 無法連線，也確認沒有另一個專用 Chrome 或程式占用預設 CDP 埠 `9222`，必要時另設 `LLM_ADAPTER_CDP_PORT`。 |
-| 專用 Chrome 一開就關閉或無法連線 | 確認 `data/chrome-profile` 沒有被其他 Chrome 程序使用，完全關閉該專用 Chrome 後再按 `Connect Chrome`。不要對日常使用的 Chrome 加入這個專案的 CDP 參數。 |
-| `Chrome started, but its local debugging endpoint did not respond` | 依「Chrome 啟動診斷 Log」讀取兩個 log，並執行 `Test-NetConnection 127.0.0.1 -Port 9222`。trace 若有 `chrome_exited`，優先檢查 Chrome stderr 與 exit code；若只有重複 `cdp_connect_failed`，確認 CDP 埠未被占用。 |
+| 專用 Chrome 一開就關閉或無法連線 | 確認 `data/chrome-profile` 沒有被其他 Chrome 程序使用，完全關閉該專用 Chrome 後再按 `Connect Chrome`。不要對日常使用的 Chrome 加入這個專案的 CDP 參數。若仍然失敗，請依照「專用 Chrome profile 鎖定與重設教學」處理 `lockfile` 與 `Singleton*`。 |
+| `Chrome started, but its local debugging endpoint did not respond` | 依「Chrome 啟動診斷 Log」讀取兩個 log，並執行 `Test-NetConnection 127.0.0.1 -Port 9222`。trace 若有 `chrome_exited`，優先檢查 Chrome stderr 與 exit code；若只有重複 `cdp_connect_failed`，確認 CDP 埠未被占用。若 Chrome log 顯示 `ws://[::1]:9222` 或 `ws://127.0.0.1:9222`，請考慮 IPv4/IPv6 loopback 差異，程式已具備 fallback。 |
+| Chrome 連線失敗但 log 顯示 DevTools 在 loopback 監聽 | 這通常不是 Chrome 沒啟動，而是 IPv4/IPv6 介面差異。程式會自動依序嘗試設定值、`127.0.0.1`、`localhost`、`[::1]`，若仍失敗請確認是否有其他 Chrome/Edge 程式持有 `data/chrome-profile` 或註冊了相同的 CDP port。 |
 | 跨電腦看不到舊對話 | Git 不會同步 `data/`。請只複製 `data/conversations/`，不要傳送或同步 `data/chrome-profile`。 |
 
 Gemini 的網頁結構可能變動。若 Gemini 已登入但仍持續找不到輸入框，請保留 `data/conversations/` 的對話檔案與錯誤訊息，以便檢查選擇器相容性。

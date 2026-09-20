@@ -10,6 +10,7 @@ from llm_adapter.storage import ConversationStore
 
 def make_session() -> ConversationSession:
     timestamp = datetime(2026, 9, 20, 6, 30, tzinfo=timezone.utc)
+    completed = datetime(2026, 9, 20, 6, 31, tzinfo=timezone.utc)
     return ConversationSession(
         session_id="20260920-143000-abcd",
         title="Gemini conversation",
@@ -22,6 +23,10 @@ def make_session() -> ConversationSession:
                 turn_id="turn-1",
                 question="第一個問題",
                 sent_at=timestamp,
+                completed_at=completed,
+                status="completed",
+                response_text="回答內容",
+                response_markdown="回答內容",
             )
         ],
     )
@@ -36,7 +41,10 @@ def test_saves_and_loads_json_and_markdown(tmp_path: Path) -> None:
 
     assert loaded == session
     assert json_path.name == f"{session.session_id}.json"
-    assert "### User\n\n第一個問題" in markdown_path.read_text(encoding="utf-8")
+    rendered = markdown_path.read_text(encoding="utf-8")
+    assert "### User\n\n第一個問題" in rendered
+    assert "Sent: 2026-09-20T06:30:00+00:00" in rendered
+    assert "Completed: 2026-09-20T06:31:00+00:00" in rendered
     assert not list(tmp_path.glob("*.tmp"))
 
 
