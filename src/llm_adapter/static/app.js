@@ -225,6 +225,254 @@ function normalizeSummaryText(rawText = "") {
     .trim();
 }
 
+function escapeHtml(text = "") {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function sanitizeUrl(rawUrl = "") {
+  const url = rawUrl.trim();
+  if (!url) return "#";
+  if (/^(https?:|mailto:|#|\/)/i.test(url)) {
+    return escapeHtml(url);
+  }
+  return "#";
+}
+
+function renderInlineMarkdown(text = "") {
+  let rendered = escapeHtml(text);
+  rendered = rendered.replace(/`([^`]+)`/g, "<code>$1</code>");
+  rendered = rendered.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  rendered = rendered.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+  rendered = rendered.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  rendered = rendered.replace(/_([^_]+)_/g, "<em>$1</em>");
+  rendered = rendered.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) => `<a href="${sanitizeUrl(url)}" target="_blank" rel="noreferrer">${label}</a>`);
+  return rendered;
+}
+
+function renderMarkdownToHtml(markdown = "") {
+  const normalized = normalizeSummaryText(markdown);
+  if (!normalized) return "";
+
+  const lines = normalized.split("\n");
+  const htmlParts = [];
+  let paragraphLines = [];
+  let listType = "";
+  let listItems = [];
+  let quoteLines = [];
+  let inCodeBlock = false;
+  let codeLanguage = "";
+  let codeLines = [];
+
+  function flushParagraph() {
+    if (!paragraphLines.length) return;
+    htmlParts.push(`<p>${renderInlineMarkdown(paragraphLines.join("\n")).replace(/\n/g, "<br>")}</p>`);
+    paragraphLines = [];
+  }
+
+  function flushList() {
+    if (!listItems.length || !listType) return;
+    const items = listItems.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("");
+    htmlParts.push(`<${listType}>${items}</${listType}>`);
+    listType = "";
+    listItems = [];
+  }
+
+  function flushQuote() {
+    if (!quoteLines.length) return;
+    htmlParts.push(`<blockquote>${quoteLines.map((line) => `<p>${renderInlineMarkdown(line)}</p>`).join("")}</blockquote>`);
+    quoteLines = [];
+  }
+
+  function flushCodeBlock() {
+    if (!codeLines.length && !codeLanguage) return;
+    const languageClass = codeLanguage ? ` class="language-${escapeHtml(codeLanguage)}"` : "";
+    htmlParts.push(`<pre><code${languageClass}>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+    codeLines = [];
+    codeLanguage = "";
+  }
+
+  for (const line of lines) {
+    const codeFenceMatch = line.match(/^```([a-zA-Z0-9_+-]+)?\s*$/);
+    if (inCodeBlock) {
+      if (codeFenceMatch) {
+        flushCodeBlock();
+        inCodeBlock = false;
+      } else {
+        codeLines.push(line);
+      }
+      continue;
+    }
+
+    if (codeFenceMatch) {
+      flushParagraph();
+      flushList();
+      flushQuote();
+      inCodeBlock = true;
+      codeLanguage = (codeFenceMatch[1] || "").toLowerCase();
+      codeLines = [];
+      continue;
+    }
+
+    if (!line.trim()) {
+      flushParagraph();
+      flushList();
+      flushQuote();
+      continue;
+    }
+
+    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    if (headingMatch) {
+      flushParagraph();
+      flushList();
+      flushQuote();
+      const level = headingMatch[1].length;
+      htmlParts.push(`<h${level}>${renderInlineMarkdown(headingMatch[2].trim())}</h${level}>`);
+      continue;
+    }
+
+    const quoteMatch = line.match(/^>\s?(.*)$/);
+    if (quoteMatch) {
+      flushParagraph();
+      flushList();
+      quoteLines.push(quoteMatch[1]);
+      continue;
+    }
+    flushQuote();
+
+    const orderedMatch = line.match(/^\d+\.\s+(.+)$/);
+    if (orderedMatch) {
+      flushParagraph();
+      if (listType && listType !== "ol") {
+        flushList();
+      }
+      listType = "ol";
+      listItems.push(orderedMatch[1]);
+      continue;
+    }
+
+    const unorderedMatch = line.match(/^[-*+]\s+(.+)$/);
+    if (unorderedMatch) {
+      flushParagraph();
+      if (listType && listType !== "ul") {
+        flushList();
+      }
+      listType = "ul";
+      listItems.push(unorderedMatch[1]);
+      continue;
+    }
+    flushList();
+
+    paragraphLines.push(line);
+  }
+
+  if (inCodeBlock) {
+    flushCodeBlock();
+  }
+  flushParagraph();
+  flushList();
+  flushQuote();
+  return htmlParts.join("");
+}
+
+function looksLikeMarkdown(text = "") {
+  const normalized = normalizeSummaryText(text);
+  if (!normalized) return false;
+  return /(^|\n)(#{1,6}\s|>\s|[-*+]\s|\d+\.\s)|```|`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\[[^\]]+\]\([^)]+\)/m.test(normalized);
+}
+
+function looksLikeJson(text = "") {
+  const normalized = text.trim();
+  if (!normalized || !/^[\[{]/.test(normalized)) return false;
+  try {
+    JSON.parse(normalized);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function createRichTextBody(text = "", preferMarkdown = false) {
+  const body = document.createElement("div");
+  body.className = "message-body";
+
+  if (preferMarkdown && looksLikeMarkdown(text)) {
+    body.classList.add("message-body--rich", "prose");
+    body.innerHTML = renderMarkdownToHtml(text);
+    return body;
+  }
+
+  body.textContent = text;
+  return body;
+}
+
+function inferArtifactPreviewType(artifact = {}) {
+  const explicitType = (artifact.preview_type || "").toLowerCase();
+  const language = (artifact.language || "").toLowerCase();
+  const code = (artifact.code || "").trim();
+  const hasImage = Boolean((artifact.image_path || "").trim());
+
+  if (explicitType === "html" && code) return "html";
+  if (explicitType === "image" && hasImage) return "image";
+  if (language === "html" || /^<!doctype html>|^<html[\s>]/i.test(code)) return "html";
+  if (language === "markdown" || language === "md") return "markdown";
+  if (language === "json" || looksLikeJson(code)) return "json";
+  if (hasImage && !code) return "image";
+  return explicitType === "code" ? "code" : "none";
+}
+
+function createArtifactPreviewNode(artifact, previewType) {
+  if (previewType === "html") {
+    const frame = document.createElement("iframe");
+    frame.className = "message-artifact-frame";
+    frame.loading = "lazy";
+    frame.referrerPolicy = "no-referrer";
+    frame.sandbox = "allow-scripts allow-same-origin";
+    frame.srcdoc = artifact.code.trim();
+    return frame;
+  }
+
+  if (previewType === "markdown") {
+    const markdown = document.createElement("div");
+    markdown.className = "message-artifact-rendered prose";
+    markdown.innerHTML = renderMarkdownToHtml(artifact.code.trim());
+    return markdown;
+  }
+
+  if (previewType === "json") {
+    const jsonBlock = document.createElement("pre");
+    jsonBlock.className = "message-artifact-json";
+    try {
+      jsonBlock.textContent = JSON.stringify(JSON.parse(artifact.code.trim()), null, 2);
+    } catch {
+      jsonBlock.textContent = artifact.code.trim();
+    }
+    return jsonBlock;
+  }
+
+  if (previewType === "image") {
+    const wrapper = document.createElement("a");
+    wrapper.className = "message-preview-link";
+    wrapper.href = artifact.image_path;
+    wrapper.target = "_blank";
+    wrapper.rel = "noreferrer";
+
+    const image = document.createElement("img");
+    image.className = "message-preview-image";
+    image.loading = "lazy";
+    image.alt = artifact.title || "Artifact preview";
+    image.src = artifact.image_path;
+    wrapper.append(image);
+    return wrapper;
+  }
+
+  return null;
+}
+
 function extractArtifactSummary(sourceText = "", artifacts = []) {
   // [修改] 2026-09-20 19:55 原因: Gemini 的摘要通常會和多個 code block 交錯出現，不能在第一個 code block 就截斷。 說明: 改為保留整段摘要，只移除 code fence 本體，讓 1/2/3 這類編號內容完整保留。
   let summary = normalizeSummaryText(sourceText);
@@ -247,7 +495,7 @@ function normalizeArtifacts(responseArtifacts = [], artifactCode = "", imagePath
         kind: artifact.kind || "code-block",
         language: artifact.language || "",
         code: artifact.code || "",
-        preview_type: artifact.preview_type || ((artifact.language || "").toLowerCase() === "html" ? "html" : artifact.code ? "code" : artifact.image_path ? "image" : "none"),
+        preview_type: inferArtifactPreviewType(artifact) || ((artifact.language || "").toLowerCase() === "html" ? "html" : artifact.code ? "code" : artifact.image_path ? "image" : "none"),
         image_path: artifact.image_path || "",
       }))
     : [];
@@ -309,10 +557,10 @@ function createArtifactPanel(artifact, copyText) {
   container.className = "message-artifact";
 
   const hasCode = Boolean(artifact?.code?.trim());
-  const hasHtmlPreview = Boolean(artifact?.preview_type === "html" && artifact?.code?.trim());
-  const hasPreview = hasHtmlPreview;
+  const previewType = inferArtifactPreviewType(artifact);
+  const hasPreview = previewType !== "code" && previewType !== "none";
   // [修改] 2026-09-20 19:55 原因: 空白預覽或空白程式碼會誤導成擷取成功。 說明: 預覽只保留真正的 HTML artifact，避免把一般 response screenshot 當成有效內容。
-  const activeTab = hasPreview && (!hasCode || hasHtmlPreview) ? "preview" : "code";
+  const activeTab = hasPreview && (!hasCode || previewType !== "code") ? "preview" : "code";
 
   if (!hasCode && !hasPreview) {
     return null;
@@ -322,9 +570,8 @@ function createArtifactPanel(artifact, copyText) {
   toolbar.className = "message-artifact-toolbar";
 
   if (artifact?.summary) {
-    const summary = document.createElement("div");
-    summary.className = "message-artifact-summary";
-    summary.textContent = artifact.summary;
+    const summary = createRichTextBody(artifact.summary, true);
+    summary.classList.add("message-artifact-summary");
     container.append(summary);
   }
 
@@ -387,14 +634,11 @@ function createArtifactPanel(artifact, copyText) {
 
   const previewPanel = document.createElement("div");
   previewPanel.className = "message-artifact-panel";
-  if (hasHtmlPreview) {
-    const frame = document.createElement("iframe");
-    frame.className = "message-artifact-frame";
-    frame.loading = "lazy";
-    frame.referrerPolicy = "no-referrer";
-    frame.sandbox = "allow-scripts allow-same-origin";
-    frame.srcdoc = artifact.code.trim();
-    previewPanel.append(frame);
+  if (hasPreview) {
+    const previewNode = createArtifactPreviewNode(artifact, previewType);
+    if (previewNode) {
+      previewPanel.append(previewNode);
+    }
   }
 
   function setActiveTab(tabName) {
@@ -454,9 +698,7 @@ function createMessage(author, text, kind, error, stateLabel, copyText, imagePat
   const displayText = artifacts.length
     ? extractArtifactSummary(summarySource || artifactSource || text, artifacts)
     : text;
-  const body = document.createElement("div");
-  body.className = "message-body";
-  body.textContent = displayText;
+  const body = createRichTextBody(displayText, kind === "model");
 
   article.append(meta);
   if (displayText) {
@@ -579,7 +821,15 @@ function connectEvents() {
   const sessionId = state.session.session_id;
   const source = new EventSource(`/api/sessions/${encodeURIComponent(sessionId)}/events`);
   state.eventSource = source;
-  source.onopen = () => { state.reconnectAttempts = 0; showNotice(""); };
+  source.onopen = async () => {
+    state.reconnectAttempts = 0;
+    showNotice("");
+    // [修改] 2026-09-21 17:25 原因: 若 Gemini 很快完成，前端可能在 SSE 訂閱建立前就錯過最後的 completed/failed 事件，導致畫面永遠停在 generating 並把按鈕鎖住。 說明: SSE 一連上就主動重新抓一次 session snapshot，收斂快速完成時的 race condition。
+    await reloadSession();
+    if (!isActive()) {
+      disconnectEvents();
+    }
+  };
   for (const eventName of ["queued", "sent", "generating", "response_update", "completed", "partial", "failed"]) {
     source.addEventListener(eventName, (event) => applyEvent(eventName, event));
   }

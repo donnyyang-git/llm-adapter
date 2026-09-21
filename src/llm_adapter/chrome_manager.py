@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.request import ProxyHandler, build_opener, urlopen
 from uuid import uuid4
 
 from playwright.async_api import Browser, Error as PlaywrightError, Page, Playwright, async_playwright
@@ -19,6 +19,7 @@ class ChromeManager:
     NEW_GEMINI_CONVERSATION_URL = "https://gemini.google.com/app"
     TRACE_LOG_NAME = "chrome-manager.jsonl"
     CHROME_LOG_NAME = "chrome-stderr.log"
+    LOOPBACK_NO_PROXY_HOSTS = ("127.0.0.1", "localhost", "::1", "[::1]")
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -56,7 +57,7 @@ class ChromeManager:
 
         if self._connected_endpoint is not None:
             try:
-                with urlopen(f"{self._connected_endpoint}/json/version", timeout=1):
+                with self._open_loopback_url(f"{self._connected_endpoint}/json/version", timeout=1):
                     self._state = ChromeStatus(state="connected", connected=True)
                     return self._state
             except OSError:
@@ -67,7 +68,7 @@ class ChromeManager:
 
         for endpoint in self._candidate_endpoints:
             try:
-                with urlopen(f"{endpoint}/json/version", timeout=1) as response:
+                with self._open_loopback_url(f"{endpoint}/json/version", timeout=1) as response:
                     payload = json.loads(response.read().decode("utf-8"))
                     if isinstance(payload, dict) and ("Browser" in payload or "webSocketDebuggerUrl" in payload):
                         self._connected_endpoint = endpoint
@@ -176,6 +177,42 @@ class ChromeManager:
                     lock_path.unlink()
                 except OSError:
                     pass
+
+    @classmethod
+    def _ensure_loopback_no_proxy_env(cls) -> None:
+        # // [修改] 2026-09-21 17:05 原因: 公司代理會攔截本機 loopback 的 CDP 請求，而使用者環境又把 NO_PROXY 誤設為 NO_PROXYx，導致 Chrome 明明已啟動卻被代理頁誤判成 403/504。 說明: 啟動前統一補齊標準 NO_PROXY/no_proxy，並保留既有清單與錯字變體內容，確保 127.0.0.1/localhost/::1 直接連線不走代理。
+        configured_hosts: list[str] = []
+        seen: set[str] = set()
+
+        for key in ("NO_PROXY", "no_proxy", "NO_PROXYx", "no_proxyx"):
+            raw_value = os.environ.get(key, "")
+            if not raw_value:
+                continue
+            for item in raw_value.split(","):
+                host = item.strip()
+                if not host:
+                    continue
+                normalized = host.lower()
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+                configured_hosts.append(host)
+
+        for host in cls.LOOPBACK_NO_PROXY_HOSTS:
+            normalized = host.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            configured_hosts.append(host)
+
+        merged_value = ",".join(configured_hosts)
+        os.environ["NO_PROXY"] = merged_value
+        os.environ["no_proxy"] = merged_value
+
+    @staticmethod
+    def _open_loopback_url(url: str, timeout: float):
+        # // [修改] 2026-09-21 17:05 原因: urllib 預設會吃到系統 HTTP_PROXY/HTTPS_PROXY，讓本機 CDP health check 被公司代理攔截。 說明: 對 loopback 檢查改用不帶 proxy 的 opener，直接打本機端點。
+        return build_opener(ProxyHandler({})).open(url, timeout=timeout)
 
     async def start(self) -> ChromeStatus:
         async with self._start_lock:
@@ -426,6 +463,7 @@ class ChromeManager:
         self._state = ChromeStatus(state="stopped", connected=False)
 
     async def _connect(self) -> bool:
+        self._ensure_loopback_no_proxy_env()
         if self._playwright is None:
             self._playwright = await async_playwright().start()
 

@@ -76,6 +76,9 @@ h2 { font-size: 19px; line-height: 1.2; }
 .message-copy { padding: 4px 8px; border: 1px solid var(--aqua); border-radius: 999px; background: transparent; color: var(--aqua); font-family: "Courier New", monospace; font-size: 10px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase; }
 .message-copy:hover { background: rgb(0 110 104 / 8%); }
 .message-body { white-space: pre-wrap; font-size: 15px; line-height: 1.55; }
+.message-body--rich {
+  white-space: normal;
+}
 .message-artifact {
   margin-top: 14px;
   border: 1px solid var(--line);
@@ -88,7 +91,7 @@ h2 { font-size: 19px; line-height: 1.2; }
   color: #0f172a;
   font-size: 14px;
   line-height: 1.65;
-  white-space: pre-wrap;
+  white-space: normal;
 }
 .message-artifact-toolbar {
   display: flex;
@@ -137,6 +140,10 @@ h2 { font-size: 19px; line-height: 1.2; }
   font-size: 13px;
   line-height: 1.55;
 }
+.message-artifact-rendered,
+.message-artifact-json {
+  margin: 0;
+}
 .message-artifact-frame {
   display: block;
   width: 100%;
@@ -144,6 +151,82 @@ h2 { font-size: 19px; line-height: 1.2; }
   border: 1px solid var(--line);
   border-radius: 4px;
   background: #fff;
+}
+.message-artifact-json {
+  overflow-x: auto;
+  white-space: pre;
+  color: #d9f7ef;
+  background: #17242b;
+  border-radius: 4px;
+  padding: 14px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.prose {
+  color: var(--ink);
+}
+.prose > :first-child {
+  margin-top: 0;
+}
+.prose > :last-child {
+  margin-bottom: 0;
+}
+.prose p,
+.prose ul,
+.prose ol,
+.prose blockquote,
+.prose pre,
+.prose table {
+  margin: 0 0 14px;
+}
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+  margin: 18px 0 10px;
+  line-height: 1.25;
+}
+.prose h1 { font-size: 28px; }
+.prose h2 { font-size: 24px; }
+.prose h3 { font-size: 20px; }
+.prose h4 { font-size: 17px; }
+.prose h5,
+.prose h6 { font-size: 15px; }
+.prose ul,
+.prose ol {
+  padding-left: 22px;
+}
+.prose li + li {
+  margin-top: 6px;
+}
+.prose blockquote {
+  padding-left: 14px;
+  border-left: 3px solid rgb(0 110 104 / 32%);
+  color: var(--muted);
+}
+.prose code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgb(23 36 43 / 8%);
+  font-family: "Courier New", monospace;
+  font-size: 0.94em;
+}
+.prose pre {
+  overflow-x: auto;
+  padding: 14px;
+  border-radius: 4px;
+  color: #d9f7ef;
+  background: #17242b;
+}
+.prose pre code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+.prose a {
+  color: var(--aqua);
 }
 .message-preview {
   margin: 14px 0 0;

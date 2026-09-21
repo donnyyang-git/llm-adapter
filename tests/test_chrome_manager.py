@@ -1,3 +1,4 @@
+import os
 import json
 from pathlib import Path
 from typing import cast
@@ -71,12 +72,36 @@ def test_status_recognizes_live_chrome_listener_without_playwright_browser(
         def read(self) -> bytes:
             return b'{"Browser": "Chrome"}'
 
-    monkeypatch.setattr("llm_adapter.chrome_manager.urlopen", lambda *_args, **_kwargs: FakeResponse())
+    monkeypatch.setattr(manager, "_open_loopback_url", lambda *_args, **_kwargs: FakeResponse())
 
     status = manager.status
 
     assert status.connected is True
     assert status.state == "connected"
+
+
+def test_ensure_loopback_no_proxy_env_promotes_nonstandard_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.setenv("NO_PROXYx", "tpftc-vllm.tw.fpg.com,10.*,localhost")
+
+    # // [修改] 2026-09-21 17:05 原因: 使用者環境實際把 loopback bypass 設在 NO_PROXYx，導致 Playwright/urllib 看不到。 說明: 驗證 ChromeManager 會把錯字變體內容提升到標準 NO_PROXY/no_proxy，並補齊所有 loopback host。
+    ChromeManager._ensure_loopback_no_proxy_env()
+
+    expected_hosts = {
+        "tpftc-vllm.tw.fpg.com",
+        "10.*",
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "[::1]",
+    }
+    assert expected_hosts.issubset(set(cast(str, os.environ.get("NO_PROXY")).split(",")))
+    assert set(cast(str, os.environ.get("NO_PROXY")).split(",")) == set(
+        cast(str, os.environ.get("no_proxy")).split(",")
+    )
 
 
 @pytest.mark.asyncio
@@ -89,7 +114,7 @@ async def test_reports_chrome_exit_and_writes_trace_log(
         Settings(data_dir=tmp_path / "data", chrome_executable=executable)
     )
     manager._connect = AsyncMock(return_value=False)
-    monkeypatch.setattr("llm_adapter.chrome_manager.urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("not listening")))
+    monkeypatch.setattr(manager, "_open_loopback_url", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("not listening")))
 
     class ExitedProcess:
         pid = 1234
@@ -127,7 +152,7 @@ async def test_cdp_timeout_points_to_diagnostic_logs(
         )
     )
     manager._connect = AsyncMock(return_value=False)
-    monkeypatch.setattr("llm_adapter.chrome_manager.urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("not listening")))
+    monkeypatch.setattr(manager, "_open_loopback_url", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("not listening")))
 
     class RunningProcess:
         pid = 1234
@@ -195,7 +220,7 @@ async def test_clears_stale_profile_lock_before_launch(
 
     manager = ChromeManager(Settings(data_dir=tmp_path / "data", chrome_executable=executable))
     manager._connect = AsyncMock(return_value=False)
-    monkeypatch.setattr("llm_adapter.chrome_manager.urlopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("not listening")))
+    monkeypatch.setattr(manager, "_open_loopback_url", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("not listening")))
 
     class RunningProcess:
         pid = 9876

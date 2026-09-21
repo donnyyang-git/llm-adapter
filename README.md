@@ -121,6 +121,19 @@ $env:LLM_ADAPTER_CHROME_EXECUTABLE = "C:\Program Files\Google\Chrome\Application
 
 可設定的項目包括 `HOST`、`PORT`、`CDP_HOST`、`CDP_PORT`、`CHROME_EXECUTABLE`、`DATA_DIR` 與回答 timeout 相關設定。預設服務埠為 `8000`，Chrome CDP 埠為 `9222`。
 
+## 公司 Proxy 與家用環境
+
+如果你在公司網路會使用 `HTTP_PROXY` / `HTTPS_PROXY`，但回家後不使用 proxy，本專案目前已同時支援這兩種情境。
+
+- 一般對外連線仍會保留你原本的 proxy 環境設定。
+- 只有本機 Chrome DevTools 需要的 loopback 位址會強制略過 proxy，避免 `127.0.0.1:9222`、`localhost:9222` 或 `[::1]:9222` 被公司代理誤攔成 `403` / `504`。
+- 若你的環境把 loopback bypass 寫在非標準變數 `NO_PROXYx`，程式會在啟動 Chrome 連線前自動合併回標準 `NO_PROXY` / `no_proxy`。
+
+因此：
+
+- 在公司使用時，外部網站仍可照常走 proxy，但本機 `data/chrome-profile` 專用 Chrome 的 CDP 偵測不會再被代理干擾。
+- 在家裡使用時，即使沒有 proxy，這段邏輯也不需要額外設定，會直接照一般本機 loopback 連線。
+
 ## Chrome 啟動診斷 Log
 
 當畫面顯示 Chrome 無法連線或 CDP endpoint timeout 時，程式會在 `data/logs/` 建立下列檔案：
